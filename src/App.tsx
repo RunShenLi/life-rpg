@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
+import DataLoader from './components/DataLoader'
 
 const CharacterPage = lazy(() => import('./pages/CharacterPage'))
 const AssetsPage = lazy(() => import('./pages/AssetsPage'))
@@ -14,6 +15,7 @@ function PageLoader() {
 export default function App() {
   return (
     <BrowserRouter>
+      <DataLoader />
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route element={<Layout />}>

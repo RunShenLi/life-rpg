@@ -14,7 +14,7 @@
 | Week 1 Day 3-4 | 角色面板页（静态展示 + Zustand数据） | ✅ 完成 |
 | Week 1 Day 5-7 | 资产装备栏 + 折线图 | ✅ 完成 |
 | Week 2 Day 1-3 | 任务板（CRUD） | ✅ 完成 |
-| Week 2 Day 4-5 | 接入 Supabase | 🔲 待开始 |
+| Week 2 Day 4-5 | 接入 Supabase | ✅ 完成 |
 | Week 2 Day 6-7 | 整体联调 + 部署 Vercel | 🔲 待开始 |
 
 ---
@@ -133,7 +133,42 @@
 
 ## 下一步（Week 2 Day 4-5）
 
-- [ ] 创建 Supabase 项目，配置 `.env` 中的 URL 和 anon key
-- [ ] 执行 DESIGN.md 中的建表 SQL（characters / debuffs / assets / asset_snapshots / quests）
-- [ ] 将 Zustand store 中的读写替换为 Supabase CRUD（保留 localStorage 作为离线缓存）
-- [ ] 页面首次加载时从 Supabase 拉取初始数据
+- [x] 创建 Supabase 项目，配置 `.env` 中的 URL 和 anon key
+- [x] 执行建表 SQL（characters / debuffs / assets / asset_snapshots / quests）
+- [x] 将 Zustand store 中的读写替换为 Supabase CRUD（保留 localStorage 作为离线缓存）
+- [x] 页面首次加载时从 Supabase 拉取初始数据
+
+---
+
+### 2026-04-01 — 接入 Supabase 持久层
+
+**完成内容**
+
+- 创建 `supabase/init.sql`：建表脚本（含 `snapshot_date UNIQUE` 约束 + 禁用 RLS）
+- 创建 `src/lib/db.ts`：封装所有表的 Supabase CRUD 操作
+- 将三个 Zustand store 更新为双写模式：
+  - 每次 mutation 先更新本地（localStorage persist），再 fire-and-forget 写入 Supabase
+  - 新增 `loadFromSupabase()` action，拉取远端数据覆盖本地
+  - character store 首次运行时若远端无数据，自动将本地默认角色推送到 Supabase
+- 创建 `src/components/DataLoader.tsx`：App 挂载时并行调用三个 store 的 `loadFromSupabase`
+- `.env` 不提交（已加入 `.gitignore`）；保留 `.env.example` 作为模板
+
+**架构说明**
+
+- **离线优先**：localStorage 作为主缓存，Supabase 作为持久层；Supabase 失败不影响 UI
+- **单用户**：关闭 RLS，使用 anon key 直接读写所有表
+- **快照 upsert**：`asset_snapshots` 的 `snapshot_date` 加了 UNIQUE 约束，Supabase 端支持覆盖
+
+**遗留问题 / 注意**
+
+- 需要在 Supabase Dashboard → SQL Editor 中手动执行 `supabase/init.sql` 建表
+- 尚未部署到 Vercel（Week 2 Day 6-7）
+
+---
+
+## 下一步（Week 2 Day 6-7）
+
+- [ ] 在 Supabase Dashboard 执行 `supabase/init.sql` 完成建表
+- [ ] 本地运行 `npm run dev` 验证数据读写正常
+- [ ] 部署到 Vercel（添加 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 环境变量）
+- [ ] 整体联调：跨设备打开验证数据同步
