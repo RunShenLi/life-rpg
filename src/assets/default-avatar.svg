@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <!-- Hat crown -->
+  <rect x="4" y="0" width="4" height="2" fill="#6d28d9"/>
+  <!-- Hat brim -->
+  <rect x="2" y="2" width="8" height="1" fill="#7c3aed"/>
+  <!-- Hat highlight -->
+  <rect x="4" y="0" width="1" height="2" fill="#8b5cf6"/>
+
+  <!-- Forehead skin -->
+  <rect x="4" y="3" width="4" height="1" fill="#fde68a"/>
+  <!-- Face -->
+  <rect x="3" y="4" width="6" height="4" fill="#fde68a"/>
+  <!-- Eyes -->
+  <rect x="4" y="5" width="1" height="1" fill="#292524"/>
+  <rect x="7" y="5" width="1" height="1" fill="#292524"/>
+  <!-- Mouth -->
+  <rect x="5" y="7" width="2" height="1" fill="#b45309"/>
+
+  <!-- Robe body -->
+  <rect x="1" y="8" width="10" height="3" fill="#1e40af"/>
+  <!-- Robe trim left -->
+  <rect x="1" y="8" width="1" height="3" fill="#60a5fa"/>
+  <!-- Robe trim right -->
+  <rect x="10" y="8" width="1" height="3" fill="#60a5fa"/>
+  <!-- Belt -->
+  <rect x="2" y="11" width="8" height="1" fill="#78350f"/>
+  <!-- Belt buckle -->
+  <rect x="5" y="11" width="2" height="1" fill="#fbbf24"/>
+
+  <!-- Robe lower left leg -->
+  <rect x="2" y="12" width="3" height="2" fill="#1e40af"/>
+  <!-- Robe lower right leg -->
+  <rect x="8" y="12" width="3" height="2" fill="#1e40af"/>
+
+  <!-- Left boot -->
+  <rect x="2" y="14" width="3" height="2" fill="#1c1917"/>
+  <!-- Right boot -->
+  <rect x="8" y="14" width="3" height="2" fill="#1c1917"/>
+  <!-- Boot sole left -->
+  <rect x="2" y="15" width="4" height="1" fill="#0c0a09"/>
+  <!-- Boot sole right -->
+  <rect x="8" y="15" width="4" height="1" fill="#0c0a09"/>
+</svg>

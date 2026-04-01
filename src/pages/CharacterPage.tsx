@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import heroImage from '../assets/hero.png'
+import defaultAvatar from '../assets/default-avatar.svg'
 import { useCharacterStore } from '../store/characterStore'
 import { useAssetStore } from '../store/assetStore'
 
@@ -48,11 +48,11 @@ export default function CharacterPage() {
   return (
     <div className="p-4 max-w-lg mx-auto space-y-6">
       <div className="pixel-card flex gap-4 items-center">
-        <div className="w-20 h-20 bg-gray-700 border-2 border-green-400 flex items-center justify-center pixel-border overflow-hidden">
+        <div className="w-20 h-20 bg-gray-800 border-2 border-green-400 flex items-center justify-center overflow-hidden">
           <img
-            src={character.avatar_url || heroImage}
+            src={character.avatar_url || defaultAvatar}
             alt="avatar"
-            className="w-full h-full object-cover pixelated"
+            className="w-full h-full object-contain pixelated sprite-idle"
           />
         </div>
         <div className="flex-1 space-y-1">
