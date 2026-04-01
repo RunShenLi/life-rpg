@@ -9,7 +9,7 @@ interface AssetState {
   addAsset: (asset: Asset) => void
   updateAsset: (id: string, fields: Partial<Omit<Asset, 'id'>>) => void
   removeAsset: (id: string) => void
-  addSnapshot: (snapshot: AssetSnapshot) => void
+  upsertSnapshot: (snapshot: AssetSnapshot) => void
 }
 
 export const useAssetStore = create<AssetState>()(
@@ -28,8 +28,16 @@ export const useAssetStore = create<AssetState>()(
           ),
         })),
       removeAsset: (id) => set((state) => ({ assets: state.assets.filter((a) => a.id !== id) })),
-      addSnapshot: (snapshot) =>
-        set((state) => ({ snapshots: [...state.snapshots, snapshot] })),
+      upsertSnapshot: (snapshot) =>
+        set((state) => {
+          const idx = state.snapshots.findIndex((s) => s.snapshot_date === snapshot.snapshot_date)
+          if (idx >= 0) {
+            const updated = [...state.snapshots]
+            updated[idx] = snapshot
+            return { snapshots: updated }
+          }
+          return { snapshots: [...state.snapshots, snapshot] }
+        }),
     }),
     { name: 'life-rpg-assets' }
   )

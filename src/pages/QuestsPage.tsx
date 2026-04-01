@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuestStore } from '../store/questStore'
 import type { Quest, QuestType, QuestPriority } from '../types'
 
@@ -15,24 +15,80 @@ const COLUMNS: { type: QuestType; label: string }[] = [
 ]
 
 function QuestItem({ quest }: { quest: Quest }) {
-  const { completeQuest, removeQuest } = useQuestStore()
+  const { updateQuest, removeQuest } = useQuestStore()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(quest.title)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus()
+  }, [editing])
+
+  const toggleStatus = () => {
+    if (quest.status === 'done') {
+      updateQuest(quest.id, { status: 'todo', completed_at: null })
+    } else {
+      updateQuest(quest.id, { status: 'done', completed_at: new Date().toISOString() })
+    }
+  }
+
+  const commitEdit = () => {
+    const title = draft.trim()
+    if (title && title !== quest.title) updateQuest(quest.id, { title })
+    else setDraft(quest.title)
+    setEditing(false)
+  }
+
+  const cancelEdit = () => {
+    setDraft(quest.title)
+    setEditing(false)
+  }
+
   return (
     <div className={`flex items-start gap-2 p-2 border border-gray-700 ${quest.status === 'done' ? 'opacity-40' : ''}`}>
+      {/* Checkbox — click toggles done/todo */}
       <button
-        onClick={() => completeQuest(quest.id)}
-        className={`mt-0.5 w-3 h-3 border flex-shrink-0 ${quest.status === 'done' ? 'bg-green-500 border-green-500' : 'border-gray-500'}`}
+        type="button"
+        onClick={toggleStatus}
+        className={`mt-0.5 w-3 h-3 border flex-shrink-0 transition-colors ${
+          quest.status === 'done' ? 'bg-green-500 border-green-500' : 'border-gray-500 hover:border-green-500'
+        }`}
+        title={quest.status === 'done' ? '撤销完成' : '标记完成'}
       />
+
+      {/* Title — double-click to edit */}
       <div className="flex-1 min-w-0">
-        <div className={`text-xs leading-snug ${quest.status === 'done' ? 'line-through' : 'text-gray-200'}`}>
-          {quest.title}
-        </div>
+        {editing ? (
+          <input
+            ref={inputRef}
+            className="w-full bg-gray-800 border border-green-500 text-gray-200 text-xs px-1 outline-none"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitEdit()
+              if (e.key === 'Escape') cancelEdit()
+            }}
+            onBlur={commitEdit}
+          />
+        ) : (
+          <div
+            className={`text-xs leading-snug cursor-text ${quest.status === 'done' ? 'line-through text-gray-500' : 'text-gray-200'}`}
+            onDoubleClick={() => { setDraft(quest.title); setEditing(true) }}
+            title="双击编辑"
+          >
+            {quest.title}
+          </div>
+        )}
       </div>
-      <span className={`text-xs px-1 border ${PRIORITY_COLOR[quest.priority]} flex-shrink-0`}>
+
+      <span className={`text-xs px-1 border flex-shrink-0 ${PRIORITY_COLOR[quest.priority]}`}>
         {quest.priority[0].toUpperCase()}
       </span>
       <button
+        type="button"
         onClick={() => removeQuest(quest.id)}
         className="text-gray-600 hover:text-red-400 text-xs flex-shrink-0"
+        title="删除"
       >
         ×
       </button>
@@ -80,6 +136,7 @@ function AddQuestInput({ type }: { type: QuestType }) {
         <option value="low">L</option>
       </select>
       <button
+        type="button"
         onClick={submit}
         className="border border-green-700 text-green-400 text-xs px-2 hover:bg-green-900"
       >
@@ -97,12 +154,16 @@ export default function QuestsPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {COLUMNS.map(({ type, label }) => {
           const col = quests.filter((q) => q.type === type)
+          const todoCount = col.filter((q) => q.status === 'todo').length
           return (
             <div key={type} className="pixel-card space-y-2">
               <div className="text-green-400 text-xs border-b border-gray-700 pb-1">
-                [{label}] <span className="text-gray-500">{col.filter((q) => q.status === 'todo').length}</span>
+                [{label}] <span className="text-gray-500">{todoCount}</span>
               </div>
               <div className="space-y-1">
+                {col.length === 0 && (
+                  <div className="text-gray-700 text-xs text-center py-2">暂无任务</div>
+                )}
                 {col.map((q) => (
                   <QuestItem key={q.id} quest={q} />
                 ))}
@@ -112,6 +173,7 @@ export default function QuestsPage() {
           )
         })}
       </div>
+      <div className="mt-4 text-gray-700 text-xs text-center">双击任务标题可编辑</div>
     </div>
   )
 }
