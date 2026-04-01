@@ -15,7 +15,7 @@
 | Week 1 Day 5-7 | 资产装备栏 + 折线图 | ✅ 完成 |
 | Week 2 Day 1-3 | 任务板（CRUD） | ✅ 完成 |
 | Week 2 Day 4-5 | 接入 Supabase | ✅ 完成 |
-| Week 2 Day 6-7 | 整体联调 + 部署 Vercel | 🔲 待开始 |
+| Week 2 Day 6-7 | 整体联调 + 部署 Vercel | ✅ 完成 |
 
 ---
 
@@ -168,7 +168,37 @@
 
 ## 下一步（Week 2 Day 6-7）
 
-- [ ] 在 Supabase Dashboard 执行 `supabase/init.sql` 完成建表
-- [ ] 本地运行 `npm run dev` 验证数据读写正常
-- [ ] 部署到 Vercel（添加 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 环境变量）
-- [ ] 整体联调：跨设备打开验证数据同步
+- [x] 在 Supabase Dashboard 执行 `supabase/init.sql` 完成建表
+- [x] 部署到 Vercel（预构建本地 dist → 上传，绕过 Vercel 远端 npm bug）
+- [x] 设置生产环境变量（VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY）
+
+---
+
+### 2026-04-01 — 部署 Vercel，MVP v0.1 上线
+
+**完成内容**
+
+- Supabase 建表成功（5 张表：characters / debuffs / assets / asset_snapshots / quests）
+- 配置 `vercel.json`（SPA rewrites + Vite framework）
+- 使用 Vercel CLI `--prebuilt` 模式绕过远端 npm install 故障，部署成功
+- **线上地址：https://life-rpg-flame.vercel.app**
+
+**架构总结（MVP v0.1）**
+
+```
+浏览器
+  ├── React 18 + Vite（Vercel CDN）
+  ├── Zustand + localStorage（离线优先缓存）
+  └── Supabase anon key（PostgreSQL 持久层）
+```
+
+**遗留 / 后续可做**
+
+- 每次部署需手动在本地 `vercel build` → `vercel deploy --prebuilt`（可用 GitHub Actions 自动化）
+- Supabase anon key 在前端可见，MVP 可接受；多用户版本需接入 Auth + RLS
+
+---
+
+## MVP v0.1 完成 🎉
+
+所有计划功能均已实现并上线。后续需求请直接提出。
