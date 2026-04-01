@@ -23,7 +23,7 @@ interface CharacterState {
 const defaultCharacter: Character = {
   id: crypto.randomUUID(),
   name: '勇者',
-  class: '未知职业',
+  classes: ['未知职业'],
   level: 1,
   exp: 0,
   avatar_url: null,

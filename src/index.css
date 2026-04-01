@@ -8,7 +8,8 @@
     margin: 0;
     background-color: #030712;
     color: #e5e7eb;
-    font-family: 'Press Start 2P', monospace;
+    /* Press Start 2P 负责英文/数字，ZCOOL QingKe HuangYou 负责中文 */
+    font-family: 'Press Start 2P', 'ZCOOL QingKe HuangYou', monospace;
     font-size: 12px;
     -webkit-font-smoothing: none;
     image-rendering: pixelated;
@@ -22,7 +23,7 @@
 
 @layer components {
   .pixel-text {
-    font-family: 'Press Start 2P', monospace;
+    font-family: 'Press Start 2P', 'ZCOOL QingKe HuangYou', monospace;
     letter-spacing: 0.05em;
   }
   .pixel-card {

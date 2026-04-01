@@ -17,7 +17,16 @@ export async function dbFetchCharacter(): Promise<Character | null> {
     .eq('character_id', char.id)
     .order('created_at', { ascending: true })
 
-  return { ...char, debuffs: debuffs ?? [] }
+  // backward compat: Supabase 跑 migration 前 classes/buff_type 列可能不存在
+  const safeDebuffs = (debuffs ?? []).map((d: Debuff) => ({
+    ...d,
+    buff_type: d.buff_type ?? 'debuff',
+  }))
+  return {
+    ...char,
+    classes: (char.classes as string[] | null) ?? (char.class ? [char.class as string] : []),
+    debuffs: safeDebuffs,
+  }
 }
 
 export async function dbInsertCharacter(character: Omit<Character, 'debuffs'>) {

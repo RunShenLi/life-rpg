@@ -4,13 +4,14 @@ export interface Debuff {
   label: string
   color: string
   severity: 1 | 2 | 3
+  buff_type: 'buff' | 'debuff'   // ▲ 正面 / ▼ 负面
   created_at: string
 }
 
 export interface Character {
   id: string
   name: string
-  class: string
+  classes: string[]              // 多职业/身份，第一项为主职
   level: number
   exp: number
   avatar_url: string | null

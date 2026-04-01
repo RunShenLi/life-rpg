@@ -127,18 +127,18 @@ function AddQuestInput({ type }: { type: QuestType }) {
         onKeyDown={(e) => e.key === 'Enter' && submit()}
       />
       <select
-        className="bg-gray-900 border border-gray-700 text-xs text-gray-400 px-1"
+        className="shrink-0 bg-gray-900 border border-gray-700 text-xs text-gray-400 px-1"
         value={priority}
         onChange={(e) => setPriority(e.target.value as QuestPriority)}
       >
-        <option value="high">H</option>
-        <option value="medium">M</option>
-        <option value="low">L</option>
+        <option value="high">高</option>
+        <option value="medium">中</option>
+        <option value="low">低</option>
       </select>
       <button
         type="button"
         onClick={submit}
-        className="border border-green-700 text-green-400 text-xs px-2 hover:bg-green-900"
+        className="shrink-0 border border-green-700 text-green-400 text-xs px-2 hover:bg-green-900"
       >
         +
       </button>
