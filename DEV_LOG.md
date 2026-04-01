@@ -202,3 +202,28 @@
 ## MVP v0.1 完成 🎉
 
 所有计划功能均已实现并上线。后续需求请直接提出。
+
+---
+
+## v0.2 开始 — 移动端适配 + 星露谷视觉风格
+
+设计文档：`DESIGN_V02.md`
+
+### 2026-04-01 — 字体热修复 + 星露谷色板初版
+
+**完成内容**
+
+- `index.css`：切换 body 字体为 `Noto Sans SC`（中文对齐，消除混排错位）
+- `index.css`：通过 Tailwind `@theme` 全局替换色板为星露谷暖色调
+  - 背景 `#0f0804` 深暖棕 / 卡片 `#1e1005` / 木边框 `#6b4423`
+  - 文字 `#f5e6c8` 奶油白 / 草绿 `#7ab648` / 金色 `#f5c542`
+- `Layout.tsx`：标题改金色，底部导航激活项改金色高亮，边框改木褐色
+- `index.html`：Google Fonts 换为 `Noto Sans SC`
+- `deploy.sh`：新增一键部署脚本（token 从环境变量读取）
+- 修复部署流程：`vercel build --prod` → `vercel deploy --prebuilt --prod`
+
+**遗留 / 下一步**
+
+- Phase 1：viewport safe-area + iOS 防缩放 + touch-action（见 DESIGN_V02.md）
+- Phase 2：触摸目标尺寸修复（勾选框、删除按钮等）
+- Phase 3：星露谷视觉细节精修
