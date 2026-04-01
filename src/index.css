@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background-color: #030712;
+    color: #e5e7eb;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 12px;
+    -webkit-font-smoothing: none;
+    image-rendering: pixelated;
+  }
+  #root {
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+@layer components {
+  .pixel-text {
+    font-family: 'Press Start 2P', monospace;
+    letter-spacing: 0.05em;
+  }
+  .pixel-card {
+    @apply bg-gray-900 border border-gray-700 p-3;
+  }
+  .pixelated {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+}
