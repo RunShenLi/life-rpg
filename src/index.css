@@ -1,18 +1,70 @@
 @import "tailwindcss";
 
+/* ── Stardew Valley 暖色调色板 ── */
+@theme {
+  --color-gray-950: #0f0804;
+  --color-gray-900: #1e1005;
+  --color-gray-800: #2a1a0a;
+  --color-gray-700: #6b4423;
+  --color-gray-600: #8b5e35;
+  --color-gray-500: #a07850;
+  --color-gray-400: #c9a87c;
+  --color-gray-300: #e0cba8;
+  --color-gray-200: #f5e6c8;
+  --color-gray-100: #fff5e0;
+
+  --color-green-400: #7ab648;
+  --color-green-500: #5a9230;
+  --color-green-600: #3d7a1a;
+  --color-green-700: #3d6b1a;
+  --color-green-800: #2d5010;
+  --color-green-900: #1e3a08;
+
+  --color-yellow-400: #f5c542;
+  --color-yellow-500: #d4a820;
+
+  --color-red-400: #e05a3a;
+  --color-red-500: #c84030;
+  --color-red-900: #3a1208;
+
+  --color-blue-400: #5ab8e0;
+  --color-blue-500: #3a9acc;
+  --color-blue-900: #0f2a3a;
+}
+
 @layer base {
-  * {
-    box-sizing: border-box;
-  }
+  * { box-sizing: border-box; }
+
   body {
     margin: 0;
-    background-color: #030712;
-    color: #e5e7eb;
-    font-family: 'Press Start 2P', monospace;
-    font-size: 12px;
-    -webkit-font-smoothing: none;
-    image-rendering: pixelated;
+    background-color: #0f0804;
+    color: #f5e6c8;
+    font-family: 'Noto Sans SC', sans-serif;
+    font-size: 14px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+    /* 防止长按选中文字 */
+    user-select: none;
+    -webkit-user-select: none;
   }
+
+  /* 桌面端字体放大 */
+  @media (min-width: 768px) {
+    body { font-size: 16px; }
+  }
+
+  /* 输入框恢复文字选中 */
+  input, textarea { user-select: text; -webkit-user-select: text; }
+
+  /* 防止 iOS 双击放大表单 */
+  input, select, textarea { touch-action: manipulation; }
+
+  /* 防止点击高亮闪烁 */
+  button, a {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   #root {
     min-height: 100svh;
     display: flex;
@@ -20,21 +72,55 @@
   }
 }
 
+/* 输入框最小 16px，防止 iOS 自动缩放页面 */
+@layer utilities {
+  input, select, textarea { font-size: 16px; }
+}
+
 @layer components {
+  /* Press Start 2P 仅用于纯 ASCII 装饰 */
   .pixel-text {
     font-family: 'Press Start 2P', monospace;
+    font-size: 10px;
     letter-spacing: 0.05em;
+    -webkit-font-smoothing: none;
   }
+
+  /* 木板风格卡片 */
   .pixel-card {
-    @apply bg-gray-900 border border-gray-700 p-3;
+    @apply bg-gray-900 p-4;
+    border: 2px solid #6b4423;
+    box-shadow:
+      inset 0 0 0 1px rgba(245, 197, 66, 0.10),
+      0 2px 8px rgba(0, 0, 0, 0.5);
   }
+
   .pixelated {
     image-rendering: pixelated;
     image-rendering: crisp-edges;
   }
+
+  .arrow-bounce-up {
+    display: inline-block;
+    animation: bounce-up 1.2s ease-in-out infinite;
+  }
+  .arrow-bounce-down {
+    display: inline-block;
+    animation: bounce-down 1.2s ease-in-out infinite;
+  }
+  @keyframes bounce-up {
+    0%, 100% { transform: translateY(0); }
+    50%       { transform: translateY(-4px); }
+  }
+  @keyframes bounce-down {
+    0%, 100% { transform: translateY(0); }
+    50%       { transform: translateY(4px); }
+  }
+
   .sprite-idle {
     animation: sprite-idle 3s ease-in-out infinite;
   }
+
   @keyframes sprite-idle {
     0%, 60%, 100% { transform: translateY(0px); }
     80%            { transform: translateY(-3px); }

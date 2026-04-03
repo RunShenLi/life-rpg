@@ -8,12 +8,15 @@ export interface Debuff {
   created_at: string
 }
 
+export interface ClassInfo {
+  name: string
+  level: number
+}
+
 export interface Character {
   id: string
   name: string
-  classes: string[]              // 多职业/身份，第一项为主职
-  level: number
-  exp: number
+  classes: ClassInfo[]           // 多职业/身份，第一项为主职，各自独立等级
   avatar_url: string | null
   tags: string[]
   debuffs: Debuff[]
@@ -43,6 +46,12 @@ export type QuestType = 'daily' | 'weekly' | 'longterm'
 export type QuestStatus = 'todo' | 'done'
 export type QuestPriority = 'low' | 'medium' | 'high'
 
+export interface Subtask {
+  id: string
+  title: string
+  done: boolean
+}
+
 export interface Quest {
   id: string
   title: string
@@ -53,4 +62,5 @@ export interface Quest {
   due_date: string | null
   created_at: string
   completed_at: string | null
+  subtasks: Subtask[]
 }

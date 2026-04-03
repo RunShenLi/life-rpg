@@ -1,11 +1,13 @@
 #!/bin/bash
 set -e
 
-# 从环境变量读取 token，或在此处手动设置
-# export VERCEL_TOKEN="your_token_here"
+# 从 .env 加载变量
+if [ -f "$(dirname "$0")/.env" ]; then
+  export $(grep -v '^#' "$(dirname "$0")/.env" | xargs)
+fi
+
 if [ -z "$VERCEL_TOKEN" ]; then
   echo "Error: VERCEL_TOKEN is not set."
-  echo "Run: export VERCEL_TOKEN=your_token && ./deploy.sh"
   exit 1
 fi
 

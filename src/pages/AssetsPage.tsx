@@ -135,7 +135,7 @@ export default function AssetsPage() {
     }))
 
   return (
-    <div className="p-4 max-w-lg mx-auto space-y-6">
+    <div className="p-4 md:p-8 max-w-lg md:max-w-3xl mx-auto space-y-6">
       <div className="pixel-card flex justify-between items-center">
         <span className="text-gray-400 text-xs">总净值</span>
         <span className="pixel-text text-yellow-400 text-sm">

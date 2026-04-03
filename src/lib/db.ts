@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Character, Debuff, Asset, AssetSnapshot, Quest } from '../types'
+import type { Character, ClassInfo, Debuff, Asset, AssetSnapshot, Quest } from '../types'
 
 // ── Character ─────────────────────────────────────────────────────────────────
 
@@ -17,28 +17,47 @@ export async function dbFetchCharacter(): Promise<Character | null> {
     .eq('character_id', char.id)
     .order('created_at', { ascending: true })
 
-  // backward compat: Supabase 跑 migration 前 classes/buff_type 列可能不存在
   const safeDebuffs = (debuffs ?? []).map((d: Debuff) => ({
     ...d,
     buff_type: d.buff_type ?? 'debuff',
   }))
+
+  // class_data（jsonb）优先；fallback 到旧 classes text[]（migration 前的数据）
+  const classData = char.class_data as ClassInfo[] | null
+  const oldClasses = char.classes as string[] | null
+  const classes: ClassInfo[] =
+    classData && classData.length > 0
+      ? classData.map((c: ClassInfo) => ({ name: c.name, level: c.level ?? 1 }))
+      : (oldClasses ?? []).map((name: string) => ({ name, level: 1 }))
+
   return {
     ...char,
-    classes: (char.classes as string[] | null) ?? (char.class ? [char.class as string] : []),
+    classes: classes.length > 0 ? classes : [{ name: '未知职业', level: 1 }],
     debuffs: safeDebuffs,
   }
 }
 
 export async function dbInsertCharacter(character: Omit<Character, 'debuffs'>) {
-  await supabase.from('characters').insert(character)
+  const { classes, ...rest } = character
+  await supabase.from('characters').insert({
+    ...rest,
+    class_data: classes,
+    classes: [],   // 保持旧列兼容
+    level: 1,
+    exp: 0,
+  })
 }
 
 export async function dbUpdateCharacter(id: string, fields: Partial<Omit<Character, 'id' | 'created_at' | 'debuffs'>>) {
-  await supabase.from('characters').update(fields).eq('id', id)
+  const { classes, ...rest } = fields
+  const dbFields: Record<string, unknown> = { ...rest }
+  if (classes !== undefined) dbFields.class_data = classes
+  await supabase.from('characters').update(dbFields).eq('id', id)
 }
 
 export async function dbInsertDebuff(debuff: Debuff) {
-  await supabase.from('debuffs').insert(debuff)
+  const { error } = await supabase.from('debuffs').insert(debuff)
+  if (error) console.error('[life-rpg] dbInsertDebuff failed:', error.message, debuff)
 }
 
 export async function dbDeleteDebuff(id: string) {
@@ -90,7 +109,10 @@ export async function dbFetchQuests(): Promise<Quest[]> {
     .from('quests')
     .select('*')
     .order('created_at', { ascending: true })
-  return data ?? []
+  return (data ?? []).map((q) => ({
+    ...q,
+    subtasks: Array.isArray(q.subtasks) ? q.subtasks : [],
+  }))
 }
 
 export async function dbInsertQuest(quest: Quest) {

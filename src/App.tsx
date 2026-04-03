@@ -5,6 +5,10 @@ import DataLoader from './components/DataLoader'
 
 const CharacterPage = lazy(() => import('./pages/CharacterPage'))
 const AssetsPage = lazy(() => import('./pages/AssetsPage'))
+const WorldPage = lazy(() => import('./pages/WorldPage'))
+const PolymarketPage = lazy(() => import('./pages/PolymarketPage'))
+const WeatherMarketPage = lazy(() => import('./pages/WeatherMarketPage'))
+const WeatherMarketDetailPage = lazy(() => import('./pages/WeatherMarketDetailPage'))
 const QuestsPage = lazy(() => import('./pages/QuestsPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 
@@ -22,6 +26,10 @@ export default function App() {
             <Route index element={<Navigate to="/character" replace />} />
             <Route path="character" element={<CharacterPage />} />
             <Route path="assets" element={<AssetsPage />} />
+            <Route path="world" element={<WorldPage />} />
+            <Route path="world/polymarket" element={<PolymarketPage />} />
+            <Route path="world/polymarket/weather" element={<WeatherMarketPage />} />
+            <Route path="world/polymarket/weather/:positionId" element={<WeatherMarketDetailPage />} />
             <Route path="quests" element={<QuestsPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
