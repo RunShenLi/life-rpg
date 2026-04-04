@@ -1,8 +1,11 @@
 /**
  * GET /api/weather-market-brief?positionId=<id>
  *
- * 为前端 WX BOT 卡片提供 AI 播报文本。
- * 从 Supabase 拉取最新快照 → 找到对应仓位 → 组 prompt → 调 Gemini 3.1 Pro → 返回 brief。
+ * 为前端 WX BOT 卡片提供 AI 深度分析播报。
+ * 数据来源：
+ *   1. Supabase 快照（仓位、NWP 多模型预报、METAR、盘口）
+ *   2. Open-Meteo 实时拉取（逐小时温度曲线、风速、风向、湿度、体感温度）
+ * 上述数据组成完整 prompt → Gemini 3.1 Pro → 返回 200-400 字深度分析。
  * Gemini 不可用时自动降级到模板文案，保证 brief 字段不为空。
  *
  * 环境变量（在 Vercel 后台配置）：
@@ -15,7 +18,46 @@ import { GoogleGenAI } from '@google/genai'
 import { createClient } from '@supabase/supabase-js'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-// ── 类型定义（与前端快照结构对齐）─────────────────────────────────────────
+// ── ICAO → 坐标（同步 CITY_REGISTRY，用于 Open-Meteo 实时拉取）─────────────
+const ICAO_COORDS: Record<string, { lat: number; lon: number; tz: string }> = {
+  CYYZ: { lat: 43.6772, lon: -79.6306, tz: 'America/Toronto' },
+  EDDM: { lat: 48.3537, lon: 11.775,   tz: 'Europe/Berlin' },
+  EGLC: { lat: 51.5053, lon: 0.0553,   tz: 'Europe/London' },
+  EGLL: { lat: 51.4775, lon: -0.4614,  tz: 'Europe/London' },
+  EPWA: { lat: 52.1657, lon: 20.9671,  tz: 'Europe/Warsaw' },
+  KATL: { lat: 33.6407, lon: -84.4277, tz: 'America/New_York' },
+  KDAL: { lat: 32.8481, lon: -96.8518, tz: 'America/Chicago' },
+  KDFW: { lat: 32.8998, lon: -97.0403, tz: 'America/Chicago' },
+  KJFK: { lat: 40.6413, lon: -73.7781, tz: 'America/New_York' },
+  KLGA: { lat: 40.7772, lon: -73.8726, tz: 'America/New_York' },
+  KMIA: { lat: 25.7959, lon: -80.287,  tz: 'America/New_York' },
+  KORD: { lat: 41.9742, lon: -87.9073, tz: 'America/Chicago' },
+  KSEA: { lat: 47.4502, lon: -122.3088,tz: 'America/Los_Angeles' },
+  LEMD: { lat: 40.4717, lon: -3.5617,  tz: 'Europe/Madrid' },
+  LFPG: { lat: 48.9964, lon: 2.555,    tz: 'Europe/Paris' },
+  LIMC: { lat: 45.6305, lon: 8.7231,   tz: 'Europe/Rome' },
+  LLBG: { lat: 31.9965, lon: 34.8906,  tz: 'Asia/Jerusalem' },
+  LTAC: { lat: 40.1282, lon: 32.9951,  tz: 'Europe/Istanbul' },
+  NZWN: { lat: -41.3272,lon: 174.805,  tz: 'Pacific/Auckland' },
+  OMDB: { lat: 25.2528, lon: 55.3644,  tz: 'Asia/Dubai' },
+  RJTT: { lat: 35.5494, lon: 139.7798, tz: 'Asia/Tokyo' },
+  RKSI: { lat: 37.4602, lon: 126.4407, tz: 'Asia/Seoul' },
+  SAEZ: { lat: -34.8222,lon: -58.5358, tz: 'America/Argentina/Buenos_Aires' },
+  SBGR: { lat: -23.4356,lon: -46.4731, tz: 'America/Sao_Paulo' },
+  VHHH: { lat: 22.308,  lon: 113.9185, tz: 'Asia/Hong_Kong' },
+  VILK: { lat: 26.7606, lon: 80.8893,  tz: 'Asia/Kolkata' },
+  WSSS: { lat: 1.3644,  lon: 103.9915, tz: 'Asia/Singapore' },
+  YSSY: { lat: -33.9461,lon: 151.1772, tz: 'Australia/Sydney' },
+  ZBAA: { lat: 40.0799, lon: 116.5847, tz: 'Asia/Shanghai' },
+  ZGGG: { lat: 23.3924, lon: 113.299,  tz: 'Asia/Shanghai' },
+  ZGSZ: { lat: 22.6393, lon: 113.8107, tz: 'Asia/Shanghai' },
+  ZHHH: { lat: 30.7838, lon: 114.2081, tz: 'Asia/Shanghai' },
+  ZSPD: { lat: 31.1443, lon: 121.8083, tz: 'Asia/Shanghai' },
+  ZUCK: { lat: 29.7192, lon: 106.6417, tz: 'Asia/Shanghai' },
+  ZUUU: { lat: 30.5786, lon: 103.9459, tz: 'Asia/Shanghai' },
+}
+
+// ── 类型定义 ───────────────────────────────────────────────────────────────
 type ModelDetail = { name: string; value: number }
 type TopBidMarket = { slug: string; bestBid: number; bestAsk: number; tempLabel: string }
 
@@ -52,6 +94,26 @@ type Snapshot = {
   historyPositions: Position[]
 }
 
+type HourlyWeather = {
+  time: string[]
+  temperature_2m: number[]
+  apparent_temperature: number[]
+  windspeed_10m: number[]
+  winddirection_10m: number[]
+  relative_humidity_2m: number[]
+}
+
+type LiveWeather = {
+  hourly: HourlyWeather
+  daily: {
+    temperature_2m_max: number[]
+    temperature_2m_min: number[]
+    windspeed_10m_max: number[]
+    winddirection_10m_dominant: number[]
+    precipitation_sum: number[]
+  }
+}
+
 type Highlights = {
   bestModel: string
   bestModelTempC: number | null
@@ -75,6 +137,12 @@ function tempToBracketDisplay(c: number | null, roundRule: string): string {
   if (roundRule === 'fahrenheit') return `${roundHalfUp(c * 9 / 5 + 32)}°F`
   const fRounded = roundHalfUp(c * 9 / 5 + 32)
   return `${roundHalfUp((fRounded - 32) * 5 / 9)}°C`
+}
+
+function degToCompass(deg: number): string {
+  const dirs = ['北', '北北东', '东北', '东北东', '东', '东南东', '东南', '南南东',
+                '南', '南南西', '西南', '西西南', '西', '西北西', '西北', '北北西']
+  return dirs[Math.round(deg / 22.5) % 16]
 }
 
 function modelLabel(name: string): string {
@@ -102,7 +170,33 @@ function computeNetPnl(pos: Position): number {
   return balance - pos.sizeUsdc
 }
 
-// ── highlights（纯数据，不依赖 AI）────────────────────────────────────────
+// ── Open-Meteo 实时气象拉取（不走 NWP 缓存，按需拉最新实况）──────────────
+
+async function fetchLiveWeather(icao: string, targetDate: string): Promise<LiveWeather | null> {
+  const coord = ICAO_COORDS[icao]
+  if (!coord) return null
+  try {
+    const params = new URLSearchParams({
+      latitude: String(coord.lat),
+      longitude: String(coord.lon),
+      timezone: coord.tz,
+      start_date: targetDate,
+      end_date: targetDate,
+      hourly: 'temperature_2m,apparent_temperature,windspeed_10m,winddirection_10m,relative_humidity_2m',
+      daily: 'temperature_2m_max,temperature_2m_min,windspeed_10m_max,winddirection_10m_dominant,precipitation_sum',
+      // 使用 GFS seamless 拿实况级数据；若当天已过，返回的是模型当日预报
+      models: 'gfs_seamless',
+      wind_speed_unit: 'kmh',
+    })
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`, { signal: AbortSignal.timeout(10000) })
+    if (!res.ok) return null
+    return await res.json() as LiveWeather
+  } catch {
+    return null
+  }
+}
+
+// ── highlights ─────────────────────────────────────────────────────────────
 
 function buildHighlights(pos: Position): Highlights {
   const bestModel = extractBestModel(pos.signalDetailReason) || pos.modelUsed
@@ -120,43 +214,81 @@ function buildHighlights(pos: Position): Highlights {
 
 // ── prompt 组装 ────────────────────────────────────────────────────────────
 
-function buildPrompt(pos: Position, h: Highlights): string {
+function buildPrompt(pos: Position, h: Highlights, live: LiveWeather | null): string {
   const rr = pos.roundRule
-
-  // 当前模型预报（与入场时对比 delta）
-  const modelLines = (pos.currentModelDetails ?? pos.modelDetails).map(cur => {
-    const entry = pos.modelDetails.find(m => m.name === cur.name)
-    const delta = entry ? cur.value - entry.value : null
-    const deltaStr = delta !== null ? ` (${delta >= 0 ? '+' : ''}${delta.toFixed(1)}°C vs 入场)` : ''
-    return `  ${modelLabel(cur.name)}: ${tempToBracketDisplay(cur.value, rr)}${deltaStr}`
-  }).join('\n')
-
-  // 盘口前5档
-  const bidLines = pos.topBidMarkets.slice(0, 5).map(
-    m => `  ${m.tempLabel}: Bid ${m.bestBid.toFixed(3)}`
-  ).join('\n')
-
   const pnlSign = h.pnlUsdc >= 0 ? '+' : ''
   const status = pos.viewStatus === 'history' ? '历史仓位（已结算）' : '当前持仓（开放中）'
 
-  return `你是一位专业天气市场播报员。根据以下实时数据，用中文写一段 80 字以内的播报文案，直接给出结论，语气简洁像气象主播，不要任何解释或前缀。
+  // ── 多模型预报对比（当前 vs 入场，含 delta）
+  const modelLines = (pos.currentModelDetails ?? pos.modelDetails).map(cur => {
+    const entry = pos.modelDetails.find(m => m.name === cur.name)
+    const delta = entry != null ? cur.value - entry.value : null
+    const deltaStr = delta !== null ? `（较入场时${delta >= 0 ? '+' : ''}${delta.toFixed(1)}°C）` : ''
+    return `  ${modelLabel(cur.name)}: ${cur.value.toFixed(1)}°C → 档位 ${tempToBracketDisplay(cur.value, rr)}${deltaStr}`
+  }).join('\n')
 
-【基本信息】
-城市：${pos.city}（${pos.icao}）· ${pos.targetDate} · 持 ${pos.side} ${pos.bracket}
-状态：${status}
-入场价：${pos.entryPrice.toFixed(3)} → 当前价：${pos.currentPrice.toFixed(3)}，净盈亏：${pnlSign}${h.pnlUsdc.toFixed(2)} USDC
+  // ── 盘口全部档位
+  const bidLines = pos.topBidMarkets.map(
+    m => `  ${m.tempLabel}: Bid ${m.bestBid.toFixed(3)} / Ask ${m.bestAsk.toFixed(3)}`
+  ).join('\n')
 
-【实测气温】
-METAR 实时：${h.metarActualTempC !== null ? h.metarActualTempC.toFixed(1) + '°C' : '暂无'}（今日峰值：${h.metarRunningMaxC !== null ? h.metarRunningMaxC.toFixed(1) + '°C' : '暂无'}）
-WU 汇报最高温：${pos.wuReportedHighTemp !== null ? pos.wuReportedHighTemp.toFixed(1) + '°C' : '暂无'}
+  // ── Open-Meteo 逐小时数据（今日）
+  let liveSection = '（实时气象数据暂不可用）'
+  if (live) {
+    const d = live.daily
+    const dailyMax  = d.temperature_2m_max[0]
+    const dailyMin  = d.temperature_2m_min[0]
+    const maxWind   = d.windspeed_10m_max[0]
+    const domDir    = d.winddirection_10m_dominant[0]
+    const precip    = d.precipitation_sum[0]
 
-【各模型当前预报】
+    // 逐小时摘要（每3小时一条，保持 prompt 紧凑）
+    const h24 = live.hourly
+    const hourlyRows: string[] = []
+    for (let i = 0; i < h24.time.length; i += 3) {
+      const localHour = h24.time[i].slice(11, 16)
+      const t   = h24.temperature_2m[i]?.toFixed(1) ?? '--'
+      const at  = h24.apparent_temperature[i]?.toFixed(1) ?? '--'
+      const ws  = h24.windspeed_10m[i]?.toFixed(0) ?? '--'
+      const wd  = h24.winddirection_10m[i] != null ? degToCompass(h24.winddirection_10m[i]) : '--'
+      const rh  = h24.relative_humidity_2m[i]?.toFixed(0) ?? '--'
+      hourlyRows.push(`  ${localHour}  气温 ${t}°C（体感 ${at}°C）  风 ${wd} ${ws}km/h  湿度 ${rh}%`)
+    }
+
+    liveSection = `预报日最高 ${dailyMax?.toFixed(1) ?? '--'}°C / 最低 ${dailyMin?.toFixed(1) ?? '--'}°C
+主导风向：${degToCompass(domDir)} ${maxWind?.toFixed(0) ?? '--'} km/h（日最大）
+降水量：${precip?.toFixed(1) ?? '0'} mm
+
+逐小时（当地时间，每3小时）：
+${hourlyRows.join('\n')}`
+  }
+
+  return `你是一位专注天气市场的气象分析师。请根据以下完整数据对该仓位进行深度播报分析，用中文写作，200-400字，分段清晰，包含：① 今日气温走势与最高温研判 ② 多模型预报共识与分歧 ③ 风速/风向/湿度对最高温的影响 ④ 当前持仓档位胜率评估。语气专业客观，直接输出分析内容，不要任何前缀或标题行。
+
+━━ 仓位基本信息 ━━
+城市：${pos.city}（${pos.icao}）
+目标日期：${pos.targetDate}
+持仓：${pos.side} ${pos.bracket}，状态：${status}
+入场价：${pos.entryPrice.toFixed(3)} → 当前价：${pos.currentPrice.toFixed(3)}
+净盈亏：${pnlSign}${h.pnlUsdc.toFixed(2)} USDC
+
+━━ 实测气温（METAR / WU）━━
+METAR 最新实温：${h.metarActualTempC != null ? h.metarActualTempC.toFixed(1) + '°C' : '暂无'}
+今日 METAR 峰值：${h.metarRunningMaxC != null ? h.metarRunningMaxC.toFixed(1) + '°C' : '暂无'}
+WU 汇报最高温：${pos.wuReportedHighTemp != null ? pos.wuReportedHighTemp.toFixed(1) + '°C' : '暂无'}
+
+━━ 各 NWP 模型当前预报 ━━
 ${modelLines}
 
-【市场盘口（Bid 最高档位）】
+━━ Open-Meteo GFS 实时气象 ━━
+${liveSection}
+
+━━ 市场盘口（全档位 Bid/Ask）━━
 ${bidLines}
 
-现在直接输出播报文案：`
+━━ 市场结算规则 ━━
+结算取当日气象站最高温，四舍五入规则：${pos.roundRule === 'fahrenheit' ? '先转华氏四舍五入取整，再转回摄氏' : '摄氏直接四舍五入'}
+当前持仓档位 ${pos.bracket} 对应的结算门槛：模型预报须落在该档位才能获胜`
 }
 
 // ── 模板兜底 ───────────────────────────────────────────────────────────────
@@ -184,7 +316,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ ok: false, error: 'positionId_required' })
   }
 
-  // 1. 拉快照
+  // 1. 并行拉快照 + 位置确认（live weather 需要 icao，先拿仓位）
   const supabase = createClient(
     process.env.VITE_SUPABASE_URL!,
     process.env.VITE_SUPABASE_ANON_KEY!,
@@ -207,29 +339,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(404).json({ ok: false, error: 'position_not_found' })
   }
 
-  // 2. 组装 highlights（不依赖 AI，始终有值）
-  const highlights = buildHighlights(pos)
+  // 2. 并行拉 Open-Meteo 实时气象（不阻塞主流程，失败静默）
+  const [highlights, live] = await Promise.all([
+    Promise.resolve(buildHighlights(pos)),
+    fetchLiveWeather(pos.icao, pos.targetDate),
+  ])
 
-  // 3. 调 Gemini 3.1 Pro 生成播报文案，失败时降级到模板
+  // 3. 调 Gemini 3.1 Pro，失败降级模板
   let brief: string
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY })
     const result = await ai.models.generateContent({
       model: 'gemini-3.1-pro-preview',
-      contents: buildPrompt(pos, highlights),
+      contents: buildPrompt(pos, highlights, live),
+      config: { maxOutputTokens: 1024 },
     })
     const text = result.text?.trim() ?? ''
-    // 空响应或异常长度也走兜底
-    brief = text.length > 0 && text.length < 500 ? text : buildFallbackBrief(pos, highlights)
+    brief = text.length > 20 ? text : buildFallbackBrief(pos, highlights)
   } catch {
-    // API Key 未配置、网络失败等均静默降级，不影响前端展示
     brief = buildFallbackBrief(pos, highlights)
   }
 
   return res.status(200).json({
     ok: true,
     generatedAt: new Date().toISOString(),
-    version: 'v1',
+    version: 'v2',
     brief,
     highlights,
   })
