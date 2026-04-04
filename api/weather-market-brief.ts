@@ -2,16 +2,16 @@
  * GET /api/weather-market-brief?positionId=<id>
  *
  * 为前端 WX BOT 卡片提供 AI 播报文本。
- * 从 Supabase 拉取最新快照 → 找到对应仓位 → 组 prompt → 调 Claude Haiku → 返回 brief。
- * Claude 不可用时自动降级到模板文案，保证 brief 字段不为空。
+ * 从 Supabase 拉取最新快照 → 找到对应仓位 → 组 prompt → 调 Gemini 3.1 Pro → 返回 brief。
+ * Gemini 不可用时自动降级到模板文案，保证 brief 字段不为空。
  *
  * 环境变量（在 Vercel 后台配置）：
- *   ANTHROPIC_API_KEY
+ *   GOOGLE_API_KEY        ← Google AI Studio 获取
  *   VITE_SUPABASE_URL
  *   VITE_SUPABASE_ANON_KEY
  */
 
-import Anthropic from '@anthropic-ai/sdk'
+import { GoogleGenAI } from '@google/genai'
 import { createClient } from '@supabase/supabase-js'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
@@ -210,16 +210,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 2. 组装 highlights（不依赖 AI，始终有值）
   const highlights = buildHighlights(pos)
 
-  // 3. 调 Claude Haiku 生成播报文案，失败时降级到模板
+  // 3. 调 Gemini 3.1 Pro 生成播报文案，失败时降级到模板
   let brief: string
   try {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 300,
-      messages: [{ role: 'user', content: buildPrompt(pos, highlights) }],
+    const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY })
+    const result = await ai.models.generateContent({
+      model: 'gemini-3.1-pro-preview',
+      contents: buildPrompt(pos, highlights),
     })
-    const text = msg.content.find(b => b.type === 'text')?.text?.trim() ?? ''
+    const text = result.text?.trim() ?? ''
     // 空响应或异常长度也走兜底
     brief = text.length > 0 && text.length < 500 ? text : buildFallbackBrief(pos, highlights)
   } catch {
