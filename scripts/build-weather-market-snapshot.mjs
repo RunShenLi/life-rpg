@@ -260,6 +260,25 @@ function parseTempLabel(row) {
   return '未知'
 }
 
+function aggregateModelDetails(rows) {
+  const map = new Map()
+  for (const row of rows) {
+    const details = row?.entry_signal?.model_details || {}
+    for (const [name, value] of Object.entries(details)) {
+      if (value == null) continue
+      const numeric = typeof value === 'number' ? value : Number(value)
+      if (!Number.isFinite(numeric)) continue
+      const previous = map.get(name)
+      if (previous == null || numeric > previous) {
+        map.set(name, numeric)
+      }
+    }
+  }
+  return [...map.entries()]
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
 async function fetchJson(url) {
   const response = await fetch(url)
   if (!response.ok) {
@@ -349,6 +368,22 @@ function buildSyntheticChainTimeline(row) {
         entry_price: toNumberOrNull(item?.entry_price),
         ...baseEvent,
       })
+
+      // Single-leg markets that were closed without a successful rebalance still
+      // need an exit event in the synthesized timeline; otherwise history rows
+      // look like duplicate entries with no explanation.
+      if (chain.length === 1 && item?.status === 'closed' && item?.exit_ts_utc) {
+        events.push({
+          ts: item.exit_ts_utc,
+          event_type: 'REBAL_OUT',
+          bracket,
+          exit_price: toNumberOrNull(item?.exit_price),
+          realized_pnl: toNumberOrNull(item?.realized_pnl_usdc),
+          reason: item?.notes || '',
+          size_usdc: Number(item?.size_usdc || 0),
+          token_id: String(item?.token_id || ''),
+        })
+      }
     }
 
     if (index > 0 && item?.entered_at_utc) {
@@ -387,13 +422,15 @@ function mergeTimelineEvents(existingEvents, chainEvents) {
     .sort((left, right) => String(left.ts || '').localeCompare(String(right.ts || '')))
     .filter((event) => {
       const key = JSON.stringify({
+        ts: event.ts || '',
         type: event.event_type || event.eventType || '',
-        token_id: event.token_id ?? null,
         bracket: event.bracket || event.old_bracket || event.new_bracket || null,
         entry_price: event.entry_price ?? null,
         exit_price: event.exit_price ?? null,
         realized_pnl: event.realized_pnl ?? null,
         final_pnl_usdc: event.final_pnl_usdc ?? null,
+        size_usdc: event.size_usdc ?? null,
+        reason: event.reason ?? null,
       })
       if (seen.has(key)) return false
       seen.add(key)
@@ -590,8 +627,26 @@ function getCurrentNwpForecasts(icao, targetDate) {
   return Promise.resolve(currentNwpCache.get(cacheKey) ?? null)
 }
 
-function normalizeTimelineEvents(row) {
-  const existingTimeline = (timelineMap[`${row.icao}-${row.target_date}`] || []).map((event) => ({
+function normalizeTimelineEvents(row, marketRows = [row]) {
+  const hasOpenPosition = marketRows.some((item) => String(item?.status || '') === 'open')
+  const hasExpiredPosition = marketRows.some((item) => String(item?.status || '') === 'expired')
+  const existingTimeline = (timelineMap[`${row.icao}-${row.target_date}`] || [])
+    .filter((event) => {
+      const eventType = String(event?.event_type || event?.eventType || '')
+      // Trade lifecycle events from positions.json are the source of truth.
+      // The market timeline log may contain stale or duplicated ENTRY/REBAL
+      // events after retries or historical schema changes, which pollutes
+      // history pages with phantom buys. Keep only non-trade annotations here.
+      if (['ENTRY', 'REBAL_IN', 'REBAL_OUT'].includes(eventType)) return false
+      // Only show settlement after the market is truly resolved.
+      // D0 monitor may emit "SETTLEMENT" as an early-loss marker for a single leg,
+      // but if the market still has open positions that is not a real market settlement.
+      if (eventType === 'SETTLEMENT') {
+        return !hasOpenPosition && hasExpiredPosition
+      }
+      return true
+    })
+    .map((event) => ({
     ...event,
     eventType: String(event.event_type || event.eventType || ''),
   }))
@@ -626,6 +681,7 @@ async function buildPositionSnapshot(row, extraFields = {}) {
   const priority = modelPriorityMap[row.icao] || []
   const usedModel = row.entry_signal?.model_used || ''
   const signalDetails = Object.entries(row.entry_signal?.model_details || {})
+    .filter(([, value]) => value !== null && value !== undefined)  // null = 模型未返回数据，跳过避免 Number(null)=0 → 32°F 的误显示
     .map(([name, value]) => ({
       name,
       value: typeof value === 'number' ? value : Number(value),
@@ -641,6 +697,7 @@ async function buildPositionSnapshot(row, extraFields = {}) {
       return a.name.localeCompare(b.name)
     })
 
+  // 返回全部档位（不截断），前端需要完整的赔率面板来绘制进度条
   const topBidMarkets = (Array.isArray(event?.markets) ? event.markets : [])
     .map((item) => ({
       slug: String(item?.slug || ''),
@@ -649,7 +706,6 @@ async function buildPositionSnapshot(row, extraFields = {}) {
       tempLabel: parseTempLabel(item),
     }))
     .sort((a, b) => b.bestBid - a.bestBid)
-    .slice(0, 3)
 
   return {
     id: row.token_id,
@@ -706,6 +762,9 @@ async function buildPositionSnapshot(row, extraFields = {}) {
         : actualRecord?.source
           ? String(actualRecord.source)
           : '',
+    settlementTemp: actualRecord ? toNumberOrNull(actualRecord.actual_temp_c) : null,
+    settlementObservedAt: String(actualRecord?.logged_at_utc || ''),
+    settlementSource: String(actualRecord?.source || ''),
     timeline: normalizeTimelineEvents(row),
     ...extraFields,
   }
@@ -724,13 +783,21 @@ for (const [key, entries] of Object.entries(nwpBatchResult)) {
   currentNwpCache.set(key, entries)
 }
 
-const openPositions = await Promise.all(
-  openRawPositions.map((row) => buildPositionSnapshot(row, { viewStatus: 'open' }))
-)
-
 const groupedPositions = groupBy(
   allPositions.filter((row) => String(row?.target_date || '') >= HISTORY_START_DATE),
   (row) => `${row.icao}-${row.target_date}`
+)
+
+const openPositions = await Promise.all(
+  openRawPositions.map((row) =>
+    buildPositionSnapshot(row, {
+      viewStatus: 'open',
+      timeline: normalizeTimelineEvents(
+        row,
+        groupedPositions.get(`${row.icao}-${row.target_date}`) || [row]
+      ),
+    })
+  )
 )
 
 const historyPositions = await Promise.all(
@@ -756,7 +823,7 @@ const historyPositions = await Promise.all(
       const heldBrackets = [...new Set(
         orderedRows.map((row) => formatBracket(row.bracket_low, row.bracket_high))
       )]
-      const timeline = normalizeTimelineEvents(latestRow)
+      const timeline = normalizeTimelineEvents(latestRow, orderedRows)
       const hasSettlement = timeline.some((event) => event.eventType === 'SETTLEMENT')
         || orderedRows.some((row) => String(row?.status || '') === 'expired')
 
@@ -773,6 +840,7 @@ const historyPositions = await Promise.all(
         heldPositionCount: orderedRows.length,
         heldBrackets,
         historyStatus,
+        modelDetails: aggregateModelDetails(orderedRows),
         timeline,
       })
     })

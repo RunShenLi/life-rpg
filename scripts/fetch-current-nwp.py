@@ -6,6 +6,10 @@
 被 build-weather-market-snapshot.mjs 通过 execFileSync 调用。
 Node.js native fetch 到 api.open-meteo.com 有 TLS/HTTP2 握手超时问题，
 Python requests 可正常访问，故走此迂回路径。
+
+模型覆盖：使用全部 11 个全球候选模型（_GLOBAL_CANDIDATE_POOL），而非仅
+city_registry 中写死的 3 个基础模型，保证 currentModelDetails 与入场时
+modelDetails 的模型集合一致，前端可正确计算每个模型的预报漂移量（delta）。
 """
 from __future__ import annotations
 
@@ -18,12 +22,15 @@ import requests
 
 sys.path.insert(0, "/root/quant")
 from quant_strategy.framework.city_registry import CITY_REGISTRY
+from quant_strategy.framework.signals.open_meteo_forecast import _GLOBAL_CANDIDATE_POOL
 
 _BASE = "https://api.open-meteo.com/v1/forecast"
-_MODELS_FOR: dict[str, list[str]] = {}
-for _icao, _cfg in CITY_REGISTRY.items():
-    if hasattr(_cfg, "models") and _cfg.models:
-        _MODELS_FOR[_icao] = list(_cfg.models)
+
+# 外部数据源（yr_no, noaa_nbm 等）不走 Open-Meteo API，此处排除
+_EXTERNAL_PROVIDERS = frozenset({"yr_no", "noaa_nbm", "noaa_nws"})
+
+# 全部可通过 Open-Meteo API 查询的全球候选模型
+_FETCH_MODELS: list[str] = [m for m in _GLOBAL_CANDIDATE_POOL if m not in _EXTERNAL_PROVIDERS]
 
 
 def _fetch_one(icao: str, target_date: str, model: str) -> tuple[str, str, float | None]:
@@ -58,7 +65,9 @@ def main() -> None:
     for item in pairs:
         icao = item["icao"]
         target_date = item["target_date"]
-        for model in _MODELS_FOR.get(icao, []):
+        # 使用全球候选池（11个模型）而非仅 cfg.models（3个），
+        # 保证与入场时 _augmented_models() 返回的模型集合对齐
+        for model in _FETCH_MODELS:
             tasks.append((icao, target_date, model))
 
     results: dict[str, list[dict]] = {}
@@ -71,11 +80,10 @@ def main() -> None:
             if value is not None:
                 results.setdefault(key, []).append({"name": model, "value": value})
 
-    # 按 city_registry 中的模型优先级排序
+    # 按全球候选池顺序排序（与入场时 modelDetails 的排序逻辑一致）
+    priority = {m: i for i, m in enumerate(_FETCH_MODELS)}
     for key, entries in results.items():
-        icao = key.split("-")[0]
-        priority = _MODELS_FOR.get(icao, [])
-        entries.sort(key=lambda e: priority.index(e["name"]) if e["name"] in priority else 999)
+        entries.sort(key=lambda e: priority.get(e["name"], 999))
 
     print(json.dumps(results))
 
