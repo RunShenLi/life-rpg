@@ -216,20 +216,10 @@ function buildHighlights(pos: Position): Highlights {
 
 function buildPrompt(pos: Position, h: Highlights, live: LiveWeather | null): string {
   const rr = pos.roundRule
-  const pnlSign = h.pnlUsdc >= 0 ? '+' : ''
-  const status = pos.viewStatus === 'history' ? '历史仓位（已结算）' : '当前持仓（开放中）'
 
-  // ── 多模型预报对比（当前 vs 入场，含 delta）
-  const modelLines = (pos.currentModelDetails ?? pos.modelDetails).map(cur => {
-    const entry = pos.modelDetails.find(m => m.name === cur.name)
-    const delta = entry != null ? cur.value - entry.value : null
-    const deltaStr = delta !== null ? `（较入场时${delta >= 0 ? '+' : ''}${delta.toFixed(1)}°C）` : ''
-    return `  ${modelLabel(cur.name)}: ${cur.value.toFixed(1)}°C → 档位 ${tempToBracketDisplay(cur.value, rr)}${deltaStr}`
-  }).join('\n')
-
-  // ── 盘口全部档位
-  const bidLines = pos.topBidMarkets.map(
-    m => `  ${m.tempLabel}: Bid ${m.bestBid.toFixed(3)} / Ask ${m.bestAsk.toFixed(3)}`
+  // 只给模型名和预报温度，不带 delta（delta 依赖入场价，属于持仓信息，会锚定 AI 判断）
+  const modelLines = (pos.currentModelDetails ?? pos.modelDetails).map(cur =>
+    `  ${modelLabel(cur.name)}: ${cur.value.toFixed(1)}°C（取整后 ${tempToBracketDisplay(cur.value, rr)}）`
   ).join('\n')
 
   // ── Open-Meteo 逐小时数据（今日）
@@ -263,22 +253,19 @@ function buildPrompt(pos: Position, h: Highlights, live: LiveWeather | null): st
 ${hourlyRows.join('\n')}`
   }
 
-  return `你是一位专注天气市场的气象分析师。请根据以下数据，用中文按以下固定格式输出，不要任何额外内容：
+  return `你是一位气象分析师，只根据气象数据进行客观分析，不参考任何市场价格或持仓信息。请用中文按以下固定格式输出，不要任何额外内容：
 
-【气温】一句话说清今日实测峰温走势与预计最终最高温。
-【模型】一句话概括各模型共识或分歧，点出最可信方向。
+【气温】一句话说清今日实测峰温走势与预计最终最高温区间。
+【模型】一句话概括各 NWP 模型的共识或分歧，点出最可信的温度方向。
 【气象】一句话说明风速/风向/湿度对今日最高温的关键影响。
-【持仓】一句话直接给出当前持仓档位的胜率判断（高/中/低）及理由。
-【结论】⚡ 一句话总结：目前最可能结算在哪个档位，持仓是否安全。
+【结论】⚡ 一句话给出今日最可能结算的温度（精确到整数档位），并说明置信度高/中/低。
 
 每项不超过50字，语气简洁直接。
 
-━━ 仓位基本信息 ━━
+━━ 城市与日期 ━━
 城市：${pos.city}（${pos.icao}）
 目标日期：${pos.targetDate}
-持仓：${pos.side} ${pos.bracket}，状态：${status}
-入场价：${pos.entryPrice.toFixed(3)} → 当前价：${pos.currentPrice.toFixed(3)}
-净盈亏：${pnlSign}${h.pnlUsdc.toFixed(2)} USDC
+温度取整规则：${pos.roundRule === 'fahrenheit' ? '原始°C → 转°F四舍五入取整 → 再转回°C' : '°C 直接四舍五入取整'}
 
 ━━ 实测气温（METAR / WU）━━
 METAR 最新实温：${h.metarActualTempC != null ? h.metarActualTempC.toFixed(1) + '°C' : '暂无'}
@@ -289,14 +276,7 @@ WU 汇报最高温：${pos.wuReportedHighTemp != null ? pos.wuReportedHighTemp.t
 ${modelLines}
 
 ━━ Open-Meteo GFS 实时气象 ━━
-${liveSection}
-
-━━ 市场盘口（全档位 Bid/Ask）━━
-${bidLines}
-
-━━ 市场结算规则 ━━
-结算取当日气象站最高温，四舍五入规则：${pos.roundRule === 'fahrenheit' ? '先转华氏四舍五入取整，再转回摄氏' : '摄氏直接四舍五入'}
-当前持仓档位 ${pos.bracket} 对应的结算门槛：模型预报须落在该档位才能获胜`
+${liveSection}`
 }
 
 // ── 模板兜底 ───────────────────────────────────────────────────────────────
