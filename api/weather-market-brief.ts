@@ -352,7 +352,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const result = await ai.models.generateContent({
       model: 'gemini-3.1-pro-preview',
       contents: buildPrompt(pos, highlights, live),
-      config: { maxOutputTokens: 1024 },
+      config: { maxOutputTokens: 4096 },
     })
     const text = result.text?.trim() ?? ''
     brief = text.length > 20 ? text : buildFallbackBrief(pos, highlights)
