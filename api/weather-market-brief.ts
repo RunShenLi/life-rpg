@@ -217,53 +217,62 @@ function buildHighlights(pos: Position): Highlights {
 function buildPrompt(pos: Position, h: Highlights, live: LiveWeather | null): string {
   const rr = pos.roundRule
 
+  // 当地当前时间（给 AI 感知"现在几点"，方便判断峰温是否已过）
+  const localNow = new Date().toLocaleString('zh-CN', {
+    timeZone: pos.timeZone,
+    month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  })
+
   // 只给模型名和预报温度，不带 delta（delta 依赖入场价，属于持仓信息，会锚定 AI 判断）
   const modelLines = (pos.currentModelDetails ?? pos.modelDetails).map(cur =>
     `  ${modelLabel(cur.name)}: ${cur.value.toFixed(1)}°C（取整后 ${tempToBracketDisplay(cur.value, rr)}）`
   ).join('\n')
 
-  // ── Open-Meteo 逐小时数据（今日）
+  // ── Open-Meteo 逐小时数据（今日，每小时一条方便 AI 找峰温时段）
   let liveSection = '（实时气象数据暂不可用）'
   if (live) {
     const d = live.daily
-    const dailyMax  = d.temperature_2m_max[0]
-    const dailyMin  = d.temperature_2m_min[0]
-    const maxWind   = d.windspeed_10m_max[0]
-    const domDir    = d.winddirection_10m_dominant[0]
-    const precip    = d.precipitation_sum[0]
+    const dailyMax = d.temperature_2m_max[0]
+    const dailyMin = d.temperature_2m_min[0]
+    const maxWind  = d.windspeed_10m_max[0]
+    const domDir   = d.winddirection_10m_dominant[0]
+    const precip   = d.precipitation_sum[0]
 
-    // 逐小时摘要（每3小时一条，保持 prompt 紧凑）
+    // 逐小时全量（每小时一条，AI 需要精确定位峰温时段）
     const h24 = live.hourly
     const hourlyRows: string[] = []
-    for (let i = 0; i < h24.time.length; i += 3) {
+    for (let i = 0; i < h24.time.length; i++) {
       const localHour = h24.time[i].slice(11, 16)
-      const t   = h24.temperature_2m[i]?.toFixed(1) ?? '--'
-      const at  = h24.apparent_temperature[i]?.toFixed(1) ?? '--'
-      const ws  = h24.windspeed_10m[i]?.toFixed(0) ?? '--'
-      const wd  = h24.winddirection_10m[i] != null ? degToCompass(h24.winddirection_10m[i]) : '--'
-      const rh  = h24.relative_humidity_2m[i]?.toFixed(0) ?? '--'
-      hourlyRows.push(`  ${localHour}  气温 ${t}°C（体感 ${at}°C）  风 ${wd} ${ws}km/h  湿度 ${rh}%`)
+      const t  = h24.temperature_2m[i]?.toFixed(1) ?? '--'
+      const at = h24.apparent_temperature[i]?.toFixed(1) ?? '--'
+      const ws = h24.windspeed_10m[i]?.toFixed(0) ?? '--'
+      const wd = h24.winddirection_10m[i] != null ? degToCompass(h24.winddirection_10m[i]) : '--'
+      const rh = h24.relative_humidity_2m[i]?.toFixed(0) ?? '--'
+      hourlyRows.push(`  ${localHour}  ${t}°C（体感${at}°C）  ${wd}风${ws}km/h  湿${rh}%`)
     }
 
     liveSection = `预报日最高 ${dailyMax?.toFixed(1) ?? '--'}°C / 最低 ${dailyMin?.toFixed(1) ?? '--'}°C
-主导风向：${degToCompass(domDir)} ${maxWind?.toFixed(0) ?? '--'} km/h（日最大）
-降水量：${precip?.toFixed(1) ?? '0'} mm
+主导风向：${degToCompass(domDir)} ${maxWind?.toFixed(0) ?? '--'} km/h（日最大）  降水：${precip?.toFixed(1) ?? '0'} mm
 
-逐小时（当地时间，每3小时）：
+逐小时（当地时间）：
 ${hourlyRows.join('\n')}`
   }
 
   return `你是一位气象分析师，只根据气象数据进行客观分析，不参考任何市场价格或持仓信息。请用中文按以下固定格式输出，不要任何额外内容：
 
-【气温】一句话说清今日实测峰温走势与预计最终最高温区间。
-【模型】一句话概括各 NWP 模型的共识或分歧，点出最可信的温度方向。
-【气象】一句话说明风速/风向/湿度对今日最高温的关键影响。
-【结论】⚡ 一句话给出今日最可能结算的温度（精确到整数档位），并说明置信度高/中/低。
+【时间】当地现在时间 + 根据逐小时数据判断今日峰温出现/预计出现在哪个时段（如"已于13:00出现"或"预计14:00-15:00达峰"）。
+【气温】今日实测峰温走势与预计最终最高温区间。
+【模型】各 NWP 模型的共识或分歧，点出最可信的温度方向。
+【气象】风速/风向/湿度对今日最高温的关键影响。
+【结论】⚡ 今日最可能结算的温度（精确到整数档位）及置信度高/中/低。
 
 每项不超过50字，语气简洁直接。
 
-━━ 城市与日期 ━━
-城市：${pos.city}（${pos.icao}）
+━━ 城市与时间 ━━
+城市：${pos.city}（${pos.icao}）  时区：${pos.timeZone}
+当地当前时间：${localNow}
 目标日期：${pos.targetDate}
 温度取整规则：${pos.roundRule === 'fahrenheit' ? '原始°C → 转°F四舍五入取整 → 再转回°C' : '°C 直接四舍五入取整'}
 
