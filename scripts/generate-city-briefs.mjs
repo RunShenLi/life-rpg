@@ -16,6 +16,7 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenAI } from '@google/genai'
 
@@ -98,22 +99,24 @@ function tempDisplay(c, roundRule) {
 
 // ── 拉逐小时气象 ───────────────────────────────────────────────────────────
 
-async function fetchHourly(icao, targetDate) {
+function fetchHourly(icao, targetDate) {
+  // Node.js fetch 对 api.open-meteo.com 的 TLS SNI 被防火墙拦截（ETIMEDOUT），
+  // 改用 Python 子进程发起请求，Python 的 TLS 实现不受同一限制。
   const coord = ICAO_COORDS[icao]
   if (!coord) return null
   try {
-    const p = new URLSearchParams({
+    const params = new URLSearchParams({
       latitude: String(coord.lat), longitude: String(coord.lon),
       timezone: coord.tz, start_date: targetDate, end_date: targetDate,
       hourly: 'temperature_2m,apparent_temperature,windspeed_10m,winddirection_10m,relative_humidity_2m',
       daily: 'temperature_2m_max,temperature_2m_min,windspeed_10m_max,winddirection_10m_dominant,precipitation_sum',
       models: 'gfs_seamless', wind_speed_unit: 'kmh',
     })
-    const res = await fetch(`https://api.open-meteo.com/v1/forecast?${p}`, {
-      signal: AbortSignal.timeout(12000),
-    })
-    if (!res.ok) return null
-    return await res.json()
+    const url = `https://api.open-meteo.com/v1/forecast?${params}`
+    const out = execFileSync('python3', ['-c',
+      `import urllib.request,json,sys; r=urllib.request.urlopen(${JSON.stringify(url)},timeout=12); print(r.read().decode())`
+    ], { timeout: 15000, encoding: 'utf-8' })
+    return JSON.parse(out)
   } catch {
     return null
   }
@@ -234,8 +237,8 @@ async function tryModel(model) {
     const result = await ai.models.generateContent({
       model,
       contents: prompt,
-      // 9城市 × 5段 × ~60字 ≈ 2700字 ≈ 700 tokens；3.1 Pro 有 thinking token 开销，给足空间
-      config: { maxOutputTokens: 8192 },
+      // 10城市 × GFS逐小时 × 5段输出，token 需求约 4000+；给足空间防截断
+      config: { maxOutputTokens: 16384 },
     })
     const text = result.text?.trim() ?? ''
     // 去掉可能的 ```json 包裹
@@ -248,8 +251,8 @@ async function tryModel(model) {
 }
 
 console.log('[city-briefs] 调用 Gemini...')
-const briefs = await tryModel('gemini-3.1-pro-preview')
-           ?? await tryModel('gemini-3.0-pro-preview')
+const briefs = await tryModel('gemini-2.5-flash')
+           ?? await tryModel('gemini-2.5-pro')
 
 if (!briefs) {
   console.error('[city-briefs] Gemini 调用失败，跳过本次更新')
