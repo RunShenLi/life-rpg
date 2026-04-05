@@ -276,24 +276,23 @@ export default function WeatherMarketMarketPage() {
       setError(matched ? null : 'market_not_found')
       setLastSyncAt(new Date().toISOString())
       // 快照加载完后自动应用预生成播报，无需用户点击按钮。
-      // 仅在 sessionStorage 未缓存 AI 播报时才覆盖，避免冲掉实时调用结果。
+      // 预生成播报是每小时批量更新的权威来源，每次快照刷新都无条件覆盖，
+      // 不受 sessionStorage 旧缓存干扰（旧缓存会被卡在上一小时的内容）。
       if (matched && snapshot.cityBriefs) {
         const pregenKey = `${matched.icao}-${matched.targetDate}`
         const pregenBrief = snapshot.cityBriefs[pregenKey]
         if (pregenBrief) {
-          const cachedRaw = positionId ? sessionStorage.getItem(briefStorageKey(positionId)) : null
-          const cached = cachedRaw ? (JSON.parse(cachedRaw) as { source?: string }) : null
-          if (!cached || cached.source !== 'ai') {
-            setBriefText(pregenBrief)
-            setBriefSource('ai')
-            setBriefGeneratedAt('')
-            setBriefVersion('pregen')
-            setBriefStatusText('当前为 AI 播报（预生成）')
-            if (positionId) {
-              sessionStorage.setItem(briefStorageKey(positionId), JSON.stringify({
-                brief: pregenBrief, source: 'ai', generatedAt: '', version: 'pregen',
-              }))
-            }
+          setBriefText(pregenBrief)
+          setBriefSource('ai')
+          setBriefGeneratedAt(snapshot.cityBriefsGeneratedAt ?? '')
+          setBriefVersion('pregen')
+          setBriefStatusText('当前为 AI 播报（预生成）')
+          if (positionId) {
+            sessionStorage.setItem(briefStorageKey(positionId), JSON.stringify({
+              brief: pregenBrief, source: 'ai',
+              generatedAt: snapshot.cityBriefsGeneratedAt ?? '',
+              version: 'pregen',
+            }))
           }
         }
       }
