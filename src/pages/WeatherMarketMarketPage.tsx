@@ -223,6 +223,9 @@ function normalizeSnapshot(payload: WeatherSnapshot | null | undefined): Weather
     generatedAt: String(payload?.generatedAt || ''),
     positions: Array.isArray(payload?.positions) ? payload.positions : [],
     historyPositions: Array.isArray(payload?.historyPositions) ? payload.historyPositions : [],
+    // cityBriefs 必须透传，否则 generate-city-briefs.mjs 写入的 AI 播报会在这里丢失
+    cityBriefs: payload?.cityBriefs ?? {},
+    cityBriefsGeneratedAt: payload?.cityBriefsGeneratedAt,
   }
 }
 
