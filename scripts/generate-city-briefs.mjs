@@ -22,9 +22,10 @@ import { GoogleGenAI } from '@google/genai'
 
 const SNAPSHOT_PATH = '/root/life-rpg/public/data/weather-market-snapshot.json'
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY
-const googleKey   = process.env.GOOGLE_API_KEY
+const supabaseUrl    = process.env.VITE_SUPABASE_URL
+const supabaseKey    = process.env.VITE_SUPABASE_ANON_KEY
+const googleKey      = process.env.GOOGLE_API_KEY
+const openrouterKey  = process.env.OPENROUTER_API_KEY
 
 if (!supabaseUrl || !supabaseKey || !googleKey) {
   console.error('[city-briefs] 缺少环境变量：VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY / GOOGLE_API_KEY')
@@ -279,12 +280,44 @@ async function tryModel(model) {
   }
 }
 
-console.log('[city-briefs] 调用 Gemini...')
-const briefs = await tryModel('gemini-3.1-pro-preview')
+// OpenRouter 调用（OpenAI 兼容接口）
+async function tryOpenRouter(model) {
+  if (!openrouterKey) return null
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openrouterKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://life-rpg.vercel.app',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 16384,
+      }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().then(t => t.slice(0, 80))}`)
+    const data = await res.json()
+    const text = data.choices?.[0]?.message?.content?.trim() ?? ''
+    const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+    console.log(`[city-briefs] ${model} 成功`)
+    return JSON.parse(clean)
+  } catch (e) {
+    console.error(`[city-briefs] ${model} 失败:`, e.message?.slice(0, 120))
+    return null
+  }
+}
+
+// 主调用链：claude-opus → gpt-4o → gemini-3.1-pro（逐级降级）
+console.log('[city-briefs] 调用 AI...')
+const briefs = await tryOpenRouter('anthropic/claude-opus-4-5')
+           ?? await tryOpenRouter('openai/gpt-4o')
+           ?? await tryModel('gemini-3.1-pro-preview')
            ?? await tryModel('gemini-3-pro-preview')
 
 if (!briefs) {
-  console.error('[city-briefs] Gemini 调用失败，跳过本次更新')
+  console.error('[city-briefs] 所有模型均失败，跳过本次更新')
   process.exit(0)
 }
 
