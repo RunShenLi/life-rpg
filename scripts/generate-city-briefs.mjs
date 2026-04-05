@@ -97,6 +97,30 @@ function tempDisplay(c, roundRule) {
   return `${roundHalfUp(c)}°C`
 }
 
+// ── 实时 METAR（直接查 AWC，不用快照里的旧值）─────────────────────────────
+// 快照由 push-snapshot cron 每5分钟构建，但 AWC 接收 METAR 有1-2分钟传播延迟，
+// 导致整点后立即构建的快照里 metarObservedAt 仍是上个半点。
+// 这里在 city-briefs 运行时重新直接拉 AWC，拿最新报文。
+
+function fetchLatestMetar(icao) {
+  try {
+    const out = execFileSync('python3', ['-c', `
+import urllib.request, json, sys
+url = "https://aviationweather.gov/api/data/metar?ids=${icao}&format=json&hours=2"
+r = urllib.request.urlopen(url, timeout=8)
+data = json.loads(r.read())
+if data:
+    obs = data[0]
+    print(json.dumps({"temp": obs.get("temp"), "obsTime": obs.get("obsTime"), "rawOb": obs.get("rawOb","")}))
+else:
+    print("null")
+`], { timeout: 12000, encoding: 'utf-8' })
+    return JSON.parse(out.trim())
+  } catch {
+    return null
+  }
+}
+
 // ── 拉逐小时气象 ───────────────────────────────────────────────────────────
 
 function fetchHourly(icao, targetDate) {
@@ -124,7 +148,7 @@ function fetchHourly(icao, targetDate) {
 
 // ── 为单个城市生成 prompt 片段 ─────────────────────────────────────────────
 
-function buildCitySection(pos, live, snapshotTime) {
+function buildCitySection(pos, live, snapshotTime, freshMetar) {
   const rr = pos.roundRule ?? 'round'
   const coord = ICAO_COORDS[pos.icao]
   const tz = coord?.tz ?? 'UTC'
@@ -136,11 +160,13 @@ function buildCitySection(pos, live, snapshotTime) {
   const snapshotLocal = new Date(snapshotTime).toLocaleString('zh-CN', {
     timeZone: tz, hour:'2-digit', minute:'2-digit', hour12: false,
   })
-  const metarTime = pos.metarObservedAt
-    ? new Date(pos.metarObservedAt).toLocaleString('zh-CN', {
-        timeZone: tz, hour:'2-digit', minute:'2-digit', hour12: false,
-      })
-    : null
+
+  // 优先用实时拉取的 METAR，fallback 到快照（快照可能落后1-2分钟）
+  const metarTemp    = freshMetar?.temp    ?? pos.metarActualTemp
+  const metarObsTime = freshMetar?.obsTime
+    ? new Date(freshMetar.obsTime * 1000).toLocaleString('zh-CN', { timeZone: tz, hour:'2-digit', minute:'2-digit', hour12: false })
+    : (pos.metarObservedAt ? new Date(pos.metarObservedAt).toLocaleString('zh-CN', { timeZone: tz, hour:'2-digit', minute:'2-digit', hour12: false }) : null)
+  const metarTime = metarObsTime
 
   const models = (pos.currentModelDetails ?? pos.modelDetails ?? [])
     .map(m => `  ${modelLabel(m.name)}: ${m.value?.toFixed(1)}°C → ${tempDisplay(m.value, rr)}`)
@@ -165,7 +191,7 @@ function buildCitySection(pos, live, snapshotTime) {
   return `━━ ${pos.city}（${pos.icao}）${pos.targetDate} ━━
 当地时间：${localNow}  NWP快照：${snapshotLocal}  METAR：${metarTime ?? '暂无'}  GFS实时
 取整规则：${rr === 'fahrenheit' ? '°C→°F四舍五入→°C' : '°C直接取整'}
-METAR实温：${pos.metarActualTemp != null ? pos.metarActualTemp.toFixed(1)+'°C' : '暂无'}  今日峰值：${pos.metarRunningMax != null ? pos.metarRunningMax.toFixed(1)+'°C' : '暂无'}  WU高温：${pos.wuReportedHighTemp != null ? pos.wuReportedHighTemp.toFixed(1)+'°C' : '暂无'}
+METAR实温：${metarTemp != null ? Number(metarTemp).toFixed(1)+'°C' : '暂无'}  今日峰值：${pos.metarRunningMax != null ? pos.metarRunningMax.toFixed(1)+'°C' : '暂无'}  WU高温：${pos.wuReportedHighTemp != null ? pos.wuReportedHighTemp.toFixed(1)+'°C' : '暂无'}
 NWP模型：
 ${models}
 GFS实时气象：
@@ -175,8 +201,8 @@ ${liveSection}`
 // ── 批量 prompt ────────────────────────────────────────────────────────────
 
 function buildBatchPrompt(cities) {
-  const sections = cities.map(({ pos, live, snapshotTime }) =>
-    buildCitySection(pos, live, snapshotTime)
+  const sections = cities.map(({ pos, live, snapshotTime, freshMetar }) =>
+    buildCitySection(pos, live, snapshotTime, freshMetar)
   ).join('\n\n')
 
   return `你是气象分析师，只根据气象数据客观分析。
@@ -218,14 +244,16 @@ if (uniquePairs.length === 0) {
 
 console.log(`[city-briefs] 处理 ${uniquePairs.length} 个城市日期对`)
 
-// 2. 并行拉逐小时气象
-const liveResults = await Promise.all(
-  uniquePairs.map(pos => fetchHourly(pos.icao, pos.targetDate))
-)
+// 2. 并行拉逐小时气象 + 实时 METAR（同时发起，减少等待）
+const [liveResults, metarResults] = await Promise.all([
+  Promise.all(uniquePairs.map(pos => fetchHourly(pos.icao, pos.targetDate))),
+  Promise.all(uniquePairs.map(pos => Promise.resolve(fetchLatestMetar(pos.icao)))),
+])
 
 const cities = uniquePairs.map((pos, i) => ({
   pos,
   live: liveResults[i],
+  freshMetar: metarResults[i],
   snapshotTime: snapshot.generatedAt,
 }))
 
