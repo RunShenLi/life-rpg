@@ -5,10 +5,13 @@ import { execFileSync } from 'node:child_process'
 const ROOT = '/root/quant/quant_strategy/framework/runtime'
 const CITY_REGISTRY_PATH = '/root/quant/quant_strategy/framework/city_registry.py'
 const OUT_PATH = '/root/life-rpg/public/data/weather-market-snapshot.json'
+const VERSION_JSON_PATH = '/root/life-rpg/public/version.json'
+const BUILD_META_PATH = '/root/life-rpg/src/generated/buildMeta.ts'
 const GAMMA_BASE_URL = 'https://gamma-api.polymarket.com'
 const HISTORY_START_DATE = '2026-04-03'
 const WU_API_KEY = process.env.WU_API_KEY || 'e1f10a1e78da46f5b10a1e78da96f525'
 const AWC_METAR_URL = 'https://aviationweather.gov/api/data/metar'
+const BUILD_ID = new Date().toISOString()
 
 function readJson(filePath, fallback) {
   try {
@@ -934,5 +937,29 @@ const snapshot = {
 }
 
 fs.mkdirSync(path.dirname(OUT_PATH), { recursive: true })
+
+// 保留上一次 generate-city-briefs.mjs 写入的 AI 播报，避免每次重建快照时被清空。
+// push-snapshot 每5分钟跑一次，city-briefs 每小时跑一次，若不 merge 会丢失。
+try {
+  const existing = JSON.parse(fs.readFileSync(OUT_PATH, 'utf-8'))
+  if (existing?.cityBriefs && typeof existing.cityBriefs === 'object') {
+    snapshot.cityBriefs = existing.cityBriefs
+    snapshot.cityBriefsGeneratedAt = existing.cityBriefsGeneratedAt
+  }
+} catch {
+  // 首次运行或文件损坏时忽略
+}
+
 fs.writeFileSync(OUT_PATH, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf-8')
+fs.writeFileSync(
+  VERSION_JSON_PATH,
+  `${JSON.stringify({ buildId: BUILD_ID, generatedAt: snapshot.generatedAt }, null, 2)}\n`,
+  'utf-8'
+)
+fs.mkdirSync(path.dirname(BUILD_META_PATH), { recursive: true })
+fs.writeFileSync(
+  BUILD_META_PATH,
+  `export const BUILD_ID = ${JSON.stringify(BUILD_ID)}\n`,
+  'utf-8'
+)
 console.log(`[weather-snapshot] wrote ${OUT_PATH}`)
