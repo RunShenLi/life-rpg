@@ -149,16 +149,17 @@ function buildCitySection(pos, live, snapshotTime) {
   let liveSection = '（实时气象不可用）'
   if (live) {
     const d = live.daily
-    const rows = []
-    for (let i = 0; i < (live.hourly?.time?.length ?? 0); i++) {
-      const t  = live.hourly.temperature_2m[i]?.toFixed(1) ?? '--'
-      const at = live.hourly.apparent_temperature[i]?.toFixed(1) ?? '--'
-      const ws = live.hourly.windspeed_10m[i]?.toFixed(0) ?? '--'
-      const wd = live.hourly.winddirection_10m[i] != null ? degToCompass(live.hourly.winddirection_10m[i]) : '--'
-      const rh = live.hourly.relative_humidity_2m[i]?.toFixed(0) ?? '--'
-      rows.push(`  ${live.hourly.time[i].slice(11,16)}  ${t}°C(体感${at}°C)  ${wd}${ws}km/h  湿${rh}%`)
-    }
-    liveSection = `日最高${d.temperature_2m_max?.[0]?.toFixed(1) ?? '--'}°C / 最低${d.temperature_2m_min?.[0]?.toFixed(1) ?? '--'}°C  主导风${degToCompass(d.winddirection_10m_dominant?.[0])}${d.windspeed_10m_max?.[0]?.toFixed(0) ?? '--'}km/h  降水${d.precipitation_sum?.[0]?.toFixed(1) ?? '0'}mm\n逐小时：\n${rows.join('\n')}`
+    // 只取当前小时（最近一小时），不发全天 24 行，减少 token 浪费
+    const nowHour = new Date().toLocaleString('sv-SE', { timeZone: tz, hour: '2-digit', hour12: false }).slice(0, 2)
+    const curIdx = (live.hourly?.time ?? []).findLastIndex(t => t.slice(11, 13) <= nowHour)
+    const idx = curIdx >= 0 ? curIdx : (live.hourly?.time?.length ?? 1) - 1
+    const t  = live.hourly.temperature_2m[idx]?.toFixed(1) ?? '--'
+    const at = live.hourly.apparent_temperature[idx]?.toFixed(1) ?? '--'
+    const ws = live.hourly.windspeed_10m[idx]?.toFixed(0) ?? '--'
+    const wd = live.hourly.winddirection_10m[idx] != null ? degToCompass(live.hourly.winddirection_10m[idx]) : '--'
+    const rh = live.hourly.relative_humidity_2m[idx]?.toFixed(0) ?? '--'
+    const hrLabel = live.hourly.time[idx]?.slice(11, 16) ?? '--'
+    liveSection = `日最高${d.temperature_2m_max?.[0]?.toFixed(1) ?? '--'}°C / 最低${d.temperature_2m_min?.[0]?.toFixed(1) ?? '--'}°C  主导风${degToCompass(d.winddirection_10m_dominant?.[0])}${d.windspeed_10m_max?.[0]?.toFixed(0) ?? '--'}km/h  降水${d.precipitation_sum?.[0]?.toFixed(1) ?? '0'}mm\n当前(${hrLabel})：${t}°C 体感${at}°C  ${wd}${ws}km/h  湿${rh}%`
   }
 
   return `━━ ${pos.city}（${pos.icao}）${pos.targetDate} ━━
@@ -251,8 +252,8 @@ async function tryModel(model) {
 }
 
 console.log('[city-briefs] 调用 Gemini...')
-const briefs = await tryModel('gemini-2.5-flash')
-           ?? await tryModel('gemini-2.5-pro')
+const briefs = await tryModel('gemini-3.1-pro-preview')
+           ?? await tryModel('gemini-3-pro-preview')
 
 if (!briefs) {
   console.error('[city-briefs] Gemini 调用失败，跳过本次更新')
