@@ -1,4 +1,5 @@
 {
+  "installCommand": "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
@@ -22,5 +23,10 @@
       ]
     }
   ],
-  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/((?!api/|assets/|.*\\..*).*)",
+      "destination": "/index.html"
+    }
+  ]
 }

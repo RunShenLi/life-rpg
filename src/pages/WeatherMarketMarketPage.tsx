@@ -69,6 +69,14 @@ type WeatherSnapshot = {
   cityBriefsGeneratedAt?: string
 }
 
+type ChatMessage = {
+  id: string
+  model: 'gemini' | 'claude' | 'gpt' | 'template'
+  text: string
+  timestamp: string
+  loading: boolean
+}
+
 const SNAPSHOT_REFRESH_MS = 30_000
 const SNAPSHOT_HIDDEN_REFRESH_MS = 120_000
 
@@ -184,10 +192,6 @@ function marketMatchesBracket(tempLabel: string, bracket: string) {
   return normalized.includes(bracket)
 }
 
-function briefStorageKey(positionId: string) {
-  return `weather-market-brief:${positionId}`
-}
-
 function buildWeatherBrief(position: PositionDetail, variant: number) {
   const bestModel = extractBestModel(position.signalDetailReason) || position.modelUsed
   const leader = position.topBidMarkets[0] ?? null
@@ -236,12 +240,8 @@ export default function WeatherMarketMarketPage() {
   const [error, setError] = useState<string | null>(null)
   const [timelineOpen, setTimelineOpen] = useState(false)
   const [briefVariant, setBriefVariant] = useState(0)
-  const [briefText, setBriefText] = useState('')
-  const [briefLoading, setBriefLoading] = useState(false)
-  const [briefSource, setBriefSource] = useState<'ai' | 'template'>('template')
-  const [briefGeneratedAt, setBriefGeneratedAt] = useState('')
-  const [briefVersion, setBriefVersion] = useState('')
-  const [briefStatusText, setBriefStatusText] = useState('当前为模板播报')
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const chatEndRef = useRef<HTMLDivElement>(null)
   const [lastSyncAt, setLastSyncAt] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [isPageVisible, setIsPageVisible] = useState(document.visibilityState === 'visible')
@@ -275,25 +275,19 @@ export default function WeatherMarketMarketPage() {
       setPosition(matched)
       setError(matched ? null : 'market_not_found')
       setLastSyncAt(new Date().toISOString())
-      // 快照加载完后自动应用预生成播报，无需用户点击按钮。
-      // 预生成播报是每小时批量更新的权威来源，每次快照刷新都无条件覆盖，
-      // 不受 sessionStorage 旧缓存干扰（旧缓存会被卡在上一小时的内容）。
-      if (matched && snapshot.cityBriefs) {
+      // 初次加载时将预生成播报推入聊天。后台刷新（background=true）只更新
+      // 仓位数据，不重置用户已有的聊天记录。
+      if (!background && matched && snapshot.cityBriefs) {
         const pregenKey = `${matched.icao}-${matched.targetDate}`
         const pregenBrief = snapshot.cityBriefs[pregenKey]
         if (pregenBrief) {
-          setBriefText(pregenBrief)
-          setBriefSource('ai')
-          setBriefGeneratedAt(snapshot.cityBriefsGeneratedAt ?? '')
-          setBriefVersion('pregen')
-          setBriefStatusText('当前为 AI 播报（预生成）')
-          if (positionId) {
-            sessionStorage.setItem(briefStorageKey(positionId), JSON.stringify({
-              brief: pregenBrief, source: 'ai',
-              generatedAt: snapshot.cityBriefsGeneratedAt ?? '',
-              version: 'pregen',
-            }))
-          }
+          setChatMessages([{
+            id: `gemini-pregen-${Date.now()}`,
+            model: 'gemini',
+            text: pregenBrief,
+            timestamp: snapshot.cityBriefsGeneratedAt ?? new Date().toISOString(),
+            loading: false,
+          }])
         }
       }
     } catch (err) {
@@ -311,104 +305,38 @@ export default function WeatherMarketMarketPage() {
   useEffect(() => {
     if (!positionId) return
     setBriefVariant(0)
-    try {
-      const raw = sessionStorage.getItem(briefStorageKey(positionId))
-      if (raw) {
-        const saved = JSON.parse(raw) as {
-          brief?: string
-          source?: 'ai' | 'template'
-          generatedAt?: string
-          version?: string
-        }
-        const nextBrief = String(saved?.brief || '').trim()
-        if (nextBrief) {
-          setBriefText(nextBrief)
-          setBriefSource(saved?.source === 'ai' ? 'ai' : 'template')
-          setBriefGeneratedAt(String(saved?.generatedAt || ''))
-          setBriefVersion(String(saved?.version || ''))
-          setBriefStatusText(saved?.source === 'ai' ? '当前为 AI 播报' : '当前为模板播报')
-          return
-        }
-      }
-    } catch {
-      // Ignore broken cached brief and fall back to template.
-    }
-    setBriefText('')
-    setBriefSource('template')
-    setBriefGeneratedAt('')
-    setBriefVersion('')
-    setBriefStatusText('当前为模板播报')
+    setChatMessages([])
   }, [positionId])
 
-  const loadBrief = useEffectEvent(async (forceVariant = false) => {
+  const callModel = useEffectEvent(async (model: 'gemini' | 'claude' | 'gpt') => {
     if (!positionId || !position) return
-    setBriefLoading(true)
-    setBriefStatusText('正在请求 AI 播报...')
+    // 拒绝并发：等待当前正在生成的消息完成
+    if (chatMessages.some(m => m.loading)) return
 
-    // 优先使用预生成播报（generate-city-briefs.mjs 每小时批量生成）
-    // 避免用户点击时实时调用 Gemini，延迟从 ~3s 降为 0
-    const pregenKey = `${position.icao}-${position.targetDate}`
-    const pregenBrief = cityBriefsRef.current[pregenKey]
-    if (pregenBrief && !forceVariant) {
-      setBriefText(pregenBrief)
-      setBriefSource('ai')
-      setBriefGeneratedAt('')
-      setBriefVersion('pregen')
-      setBriefStatusText('当前为 AI 播报（预生成）')
-      setBriefLoading(false)
-      sessionStorage.setItem(briefStorageKey(positionId), JSON.stringify({
-        brief: pregenBrief, source: 'ai', generatedAt: '', version: 'pregen',
-      }))
-      return
-    }
+    const msgId = `${model}-${Date.now()}`
+    const timestamp = new Date().toISOString()
+    setChatMessages(prev => [...prev, { id: msgId, model, text: '', timestamp, loading: true }])
 
     try {
-      const response = await fetch(`/api/weather-market-brief?positionId=${encodeURIComponent(positionId)}`, {
-        cache: 'no-store',
-      })
-      if (!response.ok) throw new Error(`brief_load_failed:${response.status}`)
-      const payload = await response.json() as {
-        ok?: boolean
-        brief?: string
-        generatedAt?: string
-        version?: string
+      const res = await fetch(
+        `/api/weather-market-brief?positionId=${encodeURIComponent(positionId)}&model=${model}`,
+        { cache: 'no-store' },
+      )
+      const payload = await res.json() as { ok?: boolean; brief?: string; error?: string }
+      if (!res.ok || !payload?.ok) {
+        // API 返回明确错误（如 OPENROUTER_API_KEY 未配置），直接展示错误原因
+        throw new Error(payload?.error ?? `HTTP ${res.status}`)
       }
-      const nextBrief = String(payload?.brief || '').trim()
-      if (!payload?.ok || !nextBrief) throw new Error('brief_empty')
-      setBriefText(nextBrief)
-      setBriefSource('ai')
-      setBriefGeneratedAt(String(payload?.generatedAt || ''))
-      setBriefVersion(String(payload?.version || ''))
-      setBriefStatusText('当前为 AI 播报')
-      sessionStorage.setItem(
-        briefStorageKey(positionId),
-        JSON.stringify({
-          brief: nextBrief,
-          source: 'ai',
-          generatedAt: String(payload?.generatedAt || ''),
-          version: String(payload?.version || ''),
-        })
-      )
-    } catch {
-      const nextVariant = forceVariant ? briefVariant + 1 : briefVariant
-      if (forceVariant) setBriefVariant(nextVariant)
-      const fallbackBrief = buildWeatherBrief(position, nextVariant)
-      setBriefText(fallbackBrief)
-      setBriefSource('template')
-      setBriefGeneratedAt('')
-      setBriefVersion('')
-      setBriefStatusText('AI 暂时不可用，已回退到模板播报')
-      sessionStorage.setItem(
-        briefStorageKey(positionId),
-        JSON.stringify({
-          brief: fallbackBrief,
-          source: 'template',
-          generatedAt: '',
-          version: '',
-        })
-      )
-    } finally {
-      setBriefLoading(false)
+      const text = String(payload?.brief || '').trim()
+      if (!text) throw new Error('返回内容为空')
+      setChatMessages(prev => prev.map(m => m.id === msgId ? { ...m, text, loading: false } : m))
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e)
+      setChatMessages(prev => prev.map(m =>
+        m.id === msgId
+          ? { ...m, model: 'template' as const, text: `调用失败：${errMsg}`, loading: false }
+          : m,
+      ))
     }
   })
 
@@ -443,9 +371,13 @@ export default function WeatherMarketMarketPage() {
     }
   }, [])
 
+  // 新消息进来时自动滚到底部
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages])
+
   const isHistory = position?.viewStatus === 'history'
   const bestModel = position ? (extractBestModel(position.signalDetailReason) || position.modelUsed) : ''
-  const weatherBrief = briefText || (position ? buildWeatherBrief(position, briefVariant) : '')
   const pnl = useMemo(() => {
     if (!position) return 0
     if (position.viewStatus === 'history' && position.totalRealizedPnl != null) return position.totalRealizedPnl
@@ -508,45 +440,85 @@ export default function WeatherMarketMarketPage() {
               </div>
             </div>
 
-            <section className="border border-yellow-600/70 bg-linear-to-r from-yellow-400/10 via-green-900/20 to-blue-900/20 p-4">
-              <div className="flex flex-col lg:flex-row lg:items-center gap-4">
-                <div className="shrink-0">
-                  <div className="border border-yellow-500 bg-gray-950/70 px-4 py-3 text-center">
-                    <div className="pixel-text text-yellow-400">WX BOT</div>
-                    <div className="mt-3 font-mono text-3xl leading-none text-gray-100">◕‿◕</div>
-                    <div className="mt-2 text-[11px] text-gray-500">天气预报员</div>
-                  </div>
+            <section className="border border-yellow-600/70 bg-linear-to-r from-yellow-400/10 via-green-900/20 to-blue-900/20 p-4 space-y-3">
+              {/* 标题栏 + 三个模型按钮 */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="pixel-text text-yellow-400">AI 分析室</div>
+                  <div className="text-[11px] text-gray-500">多模型天气分析 · 实时播报</div>
                 </div>
-                <div className="min-w-0 flex-1 space-y-3">
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                    <div>
-                      <div className="text-yellow-400 text-sm">天气预报员播报</div>
-                      <div className="text-xs text-gray-500">
-                        {briefStatusText}
-                        {briefGeneratedAt ? ` · ${formatDateTime(briefGeneratedAt)}` : ''}
-                        {briefVersion ? ` · ${briefVersion}` : ''}
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => void callModel('gemini')}
+                    disabled={chatMessages.some(m => m.loading)}
+                    className="border border-purple-500/70 bg-purple-500/10 px-3 py-1.5 text-xs text-purple-300 hover:bg-purple-500/20 disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    🔮 Gemini
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void callModel('claude')}
+                    disabled={chatMessages.some(m => m.loading)}
+                    className="border border-orange-500/70 bg-orange-500/10 px-3 py-1.5 text-xs text-orange-300 hover:bg-orange-500/20 disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    🎭 Claude
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void callModel('gpt')}
+                    disabled={chatMessages.some(m => m.loading)}
+                    className="border border-green-500/70 bg-green-500/10 px-3 py-1.5 text-xs text-green-300 hover:bg-green-500/20 disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    🤖 GPT
+                  </button>
+                </div>
+              </div>
+
+              {/* 可滚动聊天窗口 */}
+              <div className="border border-gray-700 bg-gray-950/60 h-96 overflow-y-auto p-3 space-y-3">
+                {chatMessages.length === 0 && (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center text-xs text-gray-600">
+                      <div className="text-3xl mb-2">◕‿◕</div>
+                      <div>加载中，或点击上方按钮召唤 AI 分析师</div>
+                    </div>
+                  </div>
+                )}
+                {chatMessages.map((msg) => {
+                  const isGemini = msg.model === 'gemini'
+                  const isClaude = msg.model === 'claude'
+                  const isGpt = msg.model === 'gpt'
+                  const avatarEmoji = isGemini ? '🔮' : isClaude ? '🎭' : isGpt ? '🤖' : '📋'
+                  const modelName = isGemini ? 'Gemini 3.1 Pro' : isClaude ? 'Claude Opus 4.6' : isGpt ? 'GPT-5.4' : '模板播报'
+                  const borderCls = isGemini ? 'border-purple-700/50' : isClaude ? 'border-orange-700/50' : isGpt ? 'border-green-700/50' : 'border-gray-700/50'
+                  const bgCls = isGemini ? 'bg-purple-950/25' : isClaude ? 'bg-orange-950/25' : isGpt ? 'bg-green-950/25' : 'bg-gray-950/25'
+                  const labelCls = isGemini ? 'text-purple-400' : isClaude ? 'text-orange-400' : isGpt ? 'text-green-400' : 'text-gray-500'
+                  return (
+                    <div key={msg.id} className={`border ${borderCls} ${bgCls} p-3 flex gap-3`}>
+                      <div className="shrink-0 w-9 h-9 border border-gray-700 bg-gray-900/80 flex items-center justify-center text-lg select-none">
+                        {avatarEmoji}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className={`text-[11px] font-mono font-semibold ${labelCls}`}>{modelName}</span>
+                          <span className="text-[10px] text-gray-600">{formatDateTime(msg.timestamp)}</span>
+                        </div>
+                        {msg.loading ? (
+                          <div className="flex items-center gap-1 text-xs text-gray-500">
+                            <span className="animate-bounce" style={{ animationDelay: '0ms' }}>●</span>
+                            <span className="animate-bounce" style={{ animationDelay: '150ms' }}>●</span>
+                            <span className="animate-bounce" style={{ animationDelay: '300ms' }}>●</span>
+                            <span className="ml-2">正在分析中...</span>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-200 leading-7 whitespace-pre-wrap">{msg.text}</div>
+                        )}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void loadBrief(true)
-                      }}
-                      disabled={briefLoading}
-                      className="border border-yellow-500 bg-yellow-400/10 px-3 py-2 text-xs text-yellow-300 hover:bg-yellow-400/20 disabled:opacity-60 disabled:cursor-wait"
-                    >
-                      {briefLoading ? '生成中...' : (briefSource === 'ai' ? '重新生成 AI 播报' : '生成 AI 播报')}
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2 text-[11px]">
-                    <span className={`border px-2 py-1 ${briefSource === 'ai' ? 'border-green-600 text-green-300' : 'border-gray-600 text-gray-300'}`}>
-                      {briefSource === 'ai' ? 'AI 播报' : '模板播报'}
-                    </span>
-                  </div>
-                  <div className="border border-gray-700 bg-gray-950/40 px-4 py-3 text-sm leading-7 text-gray-200">
-                    {weatherBrief}
-                  </div>
-                </div>
+                  )
+                })}
+                <div ref={chatEndRef} />
               </div>
             </section>
 

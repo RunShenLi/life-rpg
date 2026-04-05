@@ -65,6 +65,7 @@ type Position = {
   id: string
   city: string
   icao: string
+  timeZone: string
   targetDate: string
   roundRule: string
   side: 'YES' | 'NO'
@@ -214,7 +215,7 @@ function buildHighlights(pos: Position): Highlights {
 
 // ── prompt 组装 ────────────────────────────────────────────────────────────
 
-function buildPrompt(pos: Position, h: Highlights, live: LiveWeather | null): string {
+function buildPrompt(pos: Position, h: Highlights, live: LiveWeather | null, snapshotGeneratedAt: string): string {
   const rr = pos.roundRule
 
   // 当地当前时间（给 AI 感知"现在几点"，方便判断峰温是否已过）
@@ -224,6 +225,23 @@ function buildPrompt(pos: Position, h: Highlights, live: LiveWeather | null): st
     hour: '2-digit', minute: '2-digit',
     hour12: false,
   })
+
+  // 快照生成时间（NWP 多模型数据的时效基准）
+  const snapshotLocalTime = new Date(snapshotGeneratedAt).toLocaleString('zh-CN', {
+    timeZone: pos.timeZone,
+    month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  })
+
+  // METAR 观测时间（实测气温的时效）
+  const metarTime = pos.metarObservedAt
+    ? new Date(pos.metarObservedAt).toLocaleString('zh-CN', {
+        timeZone: pos.timeZone,
+        hour: '2-digit', minute: '2-digit',
+        hour12: false,
+      })
+    : null
 
   // 只给模型名和预报温度，不带 delta（delta 依赖入场价，属于持仓信息，会锚定 AI 判断）
   const modelLines = (pos.currentModelDetails ?? pos.modelDetails).map(cur =>
@@ -262,19 +280,24 @@ ${hourlyRows.join('\n')}`
 
   return `你是一位气象分析师，只根据气象数据进行客观分析，不参考任何市场价格或持仓信息。请用中文按以下固定格式输出，不要任何额外内容：
 
-【时间】当地现在时间 + 根据逐小时数据判断今日峰温出现/预计出现在哪个时段（如"已于13:00出现"或"预计14:00-15:00达峰"）。
+【时间】当地现在时间 + 峰温出现/预计时段 + 括号内注明各数据来源的时效（格式示例："NWP截至09:30，METAR截至11:45，GFS实时"）。
 【气温】今日实测峰温走势与预计最终最高温区间。
 【模型】各 NWP 模型的共识或分歧，点出最可信的温度方向。
 【气象】风速/风向/湿度对今日最高温的关键影响。
 【结论】⚡ 今日最可能结算的温度（精确到整数档位）及置信度高/中/低。
 
-每项不超过50字，语气简洁直接。
+每项不超过60字，语气简洁直接。
 
 ━━ 城市与时间 ━━
 城市：${pos.city}（${pos.icao}）  时区：${pos.timeZone}
 当地当前时间：${localNow}
 目标日期：${pos.targetDate}
 温度取整规则：${pos.roundRule === 'fahrenheit' ? '原始°C → 转°F四舍五入取整 → 再转回°C' : '°C 直接四舍五入取整'}
+
+━━ 数据时效 ━━
+NWP 多模型快照生成于（当地时间）：${snapshotLocalTime}
+METAR 最新观测时间（当地时间）：${metarTime ?? '暂无'}
+Open-Meteo GFS 实时拉取：${localNow}（本次请求即时获取）
 
 ━━ 实测气温（METAR / WU）━━
 METAR 最新实温：${h.metarActualTempC != null ? h.metarActualTempC.toFixed(1) + '°C' : '暂无'}
@@ -301,6 +324,47 @@ function buildFallbackBrief(pos: Position, h: Highlights): string {
   return `${pos.city} ${pos.targetDate}：${metarStr}，${modelStr}，盘口主档 ${h.leaderTempLabel}。当前持 ${pos.bracket}，净盈亏 ${pnlSign}${h.pnlUsdc.toFixed(2)} USDC。`
 }
 
+// ── OpenRouter（Claude / GPT）─────────────────────────────────────────────
+
+// 返回 { text } 成功 | { error } 失败，便于调用方区分"有结果"和"出错"
+async function tryOpenRouter(model: string, prompt: string): Promise<{ text: string } | { error: string }> {
+  const key = process.env.OPENROUTER_API_KEY
+  if (!key) {
+    console.error('[weather-brief] OPENROUTER_API_KEY 未配置，请在 Vercel 环境变量中添加')
+    return { error: 'OPENROUTER_API_KEY 未配置' }
+  }
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://life-rpg.vercel.app',
+        'X-Title': 'Life RPG Weather Market',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 4096,
+      }),
+      signal: AbortSignal.timeout(60000),
+    })
+    if (!res.ok) {
+      const body = await res.text().then(t => t.slice(0, 200))
+      console.error(`[weather-brief] OpenRouter HTTP ${res.status}:`, body)
+      return { error: `OpenRouter HTTP ${res.status}: ${body}` }
+    }
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> }
+    const text = data.choices?.[0]?.message?.content?.trim() ?? ''
+    if (text.length < 20) return { error: '返回内容过短或为空' }
+    return { text }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[weather-brief] OpenRouter 异常:', msg)
+    return { error: msg }
+  }
+}
+
 // ── 主 handler ────────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -312,6 +376,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!positionId) {
     return res.status(400).json({ ok: false, error: 'positionId_required' })
   }
+
+  // model: 'gemini'（默认）| 'claude'（OpenRouter Claude Opus）| 'gpt'（OpenRouter o4-mini）
+  const modelParam = typeof req.query.model === 'string' ? req.query.model : 'gemini'
 
   // 1. 并行拉快照 + 位置确认（live weather 需要 icao，先拿仓位）
   const supabase = createClient(
@@ -342,19 +409,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     fetchLiveWeather(pos.icao, pos.targetDate),
   ])
 
-  // 3. 调 Gemini 3.1 Pro，失败降级模板
+  // 3. 根据 model 参数选择 AI 模型：gemini（默认）/ claude（OpenRouter）/ gpt（OpenRouter）
+  const prompt = buildPrompt(pos, highlights, live, snapshot.generatedAt)
+
   let brief: string
-  try {
+  if (modelParam === 'claude') {
+    const result = await tryOpenRouter('anthropic/claude-opus-4.6', prompt)
+    if ('error' in result) {
+      return res.status(502).json({ ok: false, error: result.error })
+    }
+    brief = result.text
+  } else if (modelParam === 'gpt') {
+    const result = await tryOpenRouter('openai/gpt-5.4', prompt)
+    if ('error' in result) {
+      return res.status(502).json({ ok: false, error: result.error })
+    }
+    brief = result.text
+  } else {
+    // 默认 Gemini：3.1 Pro → 3.0 Pro → 模板
     const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY })
-    const result = await ai.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
-      contents: buildPrompt(pos, highlights, live),
-      config: { maxOutputTokens: 4096 },
-    })
-    const text = result.text?.trim() ?? ''
-    brief = text.length > 20 ? text : buildFallbackBrief(pos, highlights)
-  } catch {
-    brief = buildFallbackBrief(pos, highlights)
+    const genConfig = { maxOutputTokens: 4096 }
+    async function tryGemini(model: string): Promise<string | null> {
+      try {
+        const result = await ai.models.generateContent({ model, contents: prompt, config: genConfig })
+        const text = result.text?.trim() ?? ''
+        return text.length > 20 ? text : null
+      } catch {
+        return null
+      }
+    }
+    brief = await tryGemini('gemini-3.1-pro-preview')
+         ?? await tryGemini('gemini-3.0-pro-preview')
+         ?? buildFallbackBrief(pos, highlights)
   }
 
   return res.status(200).json({
